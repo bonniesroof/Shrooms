@@ -235,5 +235,13 @@ def describe(intent: AnyIntent) -> str:
         return f"set trade bias {intent.bias:.2f} in {intent.patch}"
     if k == "spill":
         return f"spill {intent.mass_g:.0f} g at ({intent.x:.0f},{intent.y:.0f})"
-    box = f"x{intent.x0}-{intent.x1} y{intent.y0}-{intent.y1}"
-    return f"disturb {intent.fraction:.0%} of plants in {box}"
+    if hasattr(intent, "x0"):
+        box = f"x{intent.x0}-{intent.x1} y{intent.y0}-{intent.y1}"
+        what = "plants" if k == "disturb" else "soil"
+        return f"{k} {intent.fraction:.0%} of {what} in {box}"
+    at = f"at ({intent.x:.0f},{intent.y:.0f}) r{intent.radius:g}"
+    if k == "inoculate":
+        return f"inoculate {intent.mass_c_g:.0f} g C of {intent.guild} {at}"
+    if hasattr(intent, "water_mm"):
+        return f"{k} {intent.water_mm:.0f} mm {at}"
+    return f"{k} {intent.mass_c_g:.0f} g C {at}"

@@ -77,7 +77,77 @@ class SetTradeBias(_Intent):
     bias: float = Field(gt=0.0, le=10.0)
 
 
-AnyIntent = Disturb | Spill | ShuttleNutrients | RelocateHyphae | SetTradeBias
+# --- Remediation tools (the player) and scenario events (the director) --------
+# Each acts on a Gaussian blob of the given radius around (x, y), or a rectangle.
+
+
+class _Blob(_Intent):
+    x: float
+    y: float
+    radius: float = Field(3.0, gt=0.0, le=16.0)
+
+
+class Inoculate(_Blob):
+    """Bioaugmentation: bring in cultured microbes (bacteria, saprotrophs or mycorrhizae)."""
+
+    kind: Literal["inoculate"] = "inoculate"
+    guild: Literal["bacteria", "saprotrophs", "mycorrhiza"]
+    mass_c_g: float = Field(gt=0.0, le=5000.0)
+
+
+class Amend(_Blob):
+    """Spread compost: N-rich litter that feeds decomposers and holds water."""
+
+    kind: Literal["amend"] = "amend"
+    mass_c_g: float = Field(gt=0.0, le=50000.0)
+
+
+class Seed(_Blob):
+    """Sow plants: young biomass at target stoichiometry."""
+
+    kind: Literal["seed"] = "seed"
+    mass_c_g: float = Field(gt=0.0, le=20000.0)
+
+
+class Irrigate(_Blob):
+    """Add water to the topsoil."""
+
+    kind: Literal["irrigate"] = "irrigate"
+    water_mm: float = Field(gt=0.0, le=100.0)  # at the blob centre
+
+
+class Excavate(_Intent):
+    """Dig out and haul away a share of the soil in a rectangle, contaminant and all."""
+
+    kind: Literal["excavate"] = "excavate"
+    x0: int
+    y0: int
+    x1: int  # exclusive
+    y1: int  # exclusive
+    fraction: float = Field(gt=0.0, le=0.9)
+
+
+class PestOutbreak(_Blob):
+    """Director event: a swarm of herbivorous insects arrives."""
+
+    kind: Literal["pest_outbreak"] = "pest_outbreak"
+    mass_c_g: float = Field(gt=0.0, le=500.0)
+
+
+class Downpour(_Blob):
+    """Director event: a cloudburst over part of the plot."""
+
+    kind: Literal["downpour"] = "downpour"
+    water_mm: float = Field(gt=0.0, le=150.0)  # at the blob centre
+
+
+TOOL_KINDS = ("inoculate", "amend", "seed", "irrigate", "excavate")
+DIRECTOR_KINDS = ("pest_outbreak", "downpour")
+
+AnyIntent = (
+    Disturb | Spill | ShuttleNutrients | RelocateHyphae | SetTradeBias
+    | Inoculate | Amend | Seed | Irrigate | Excavate | PestOutbreak | Downpour
+)  # fmt: skip
 Intent = Annotated[AnyIntent, Field(discriminator="kind")]
 NETWORK_KINDS = ("shuttle_nutrients", "relocate_hyphae", "set_trade_bias")
 
@@ -103,6 +173,32 @@ def _respire(state: WorldState, ledger: Ledger, amount: float) -> None:
     ledger.outflow("c", "resp_network_transport", amount)
 
 
+def blob(shape: tuple[int, int], x: float, y: float, radius: float) -> np.ndarray:
+    """Gaussian weights around (x, y) that sum to 1."""
+    h, w = shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    g = np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * radius**2))
+    return g / g.sum()
+
+
+def peak_blob(shape: tuple[int, int], x: float, y: float, radius: float) -> np.ndarray:
+    """Gaussian weights around (x, y) that equal 1 at the centre."""
+    h, w = shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    return np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * radius**2))
+
+
+COMPOST_CN, COMPOST_CP = 15.0, 120.0
+
+
+def _import_pool(state, ledger, pool, c, cn, cp, flow) -> None:
+    add = Pool(c, c / cn, c / cp)
+    pool.add(add)
+    ledger.inflow("c", flow, float(add.c.sum()), external=True)
+    ledger.inflow("n", flow, float(add.n.sum()))
+    ledger.inflow("p", flow, float(add.p.sum()))
+
+
 def _share(weights: np.ndarray) -> np.ndarray:
     total = weights.sum()
     return weights / total if total > 0 else np.full(weights.shape, 1.0 / weights.size)
@@ -119,10 +215,7 @@ def apply(intent: AnyIntent, state: WorldState, ledger: Ledger, params: SimParam
         ledger.move("c", "disturbance", float(knocked.c.sum()))
 
     elif isinstance(intent, Spill):
-        h, w = state.shape
-        yy, xx = np.mgrid[0:h, 0:w]
-        blob = np.exp(-((yy - intent.y) ** 2 + (xx - intent.x) ** 2) / (2 * intent.radius**2))
-        added = intent.mass_g * blob / blob.sum()
+        added = intent.mass_g * blob(state.shape, intent.x, intent.y, intent.radius)
         state.contaminant = state.contaminant + added
         ledger.inflow("contaminant", "spill", float(added.sum()))
 
@@ -161,6 +254,60 @@ def apply(intent: AnyIntent, state: WorldState, ledger: Ledger, params: SimParam
         arrival.p[dst] = moved.p.sum() * weights
         f.add(arrival)
         ledger.move("c", "hyphal_relocation", float(moved.c.sum()))
+
+    elif isinstance(intent, Inoculate):
+        w = blob(state.shape, intent.x, intent.y, intent.radius)
+        guild = {
+            "bacteria": params.decomposers.bacteria,
+            "saprotrophs": params.decomposers.saprotrophs,
+            "mycorrhiza": params.mycorrhiza.guild,
+        }[intent.guild]
+        _import_pool(state, ledger, state.pool(intent.guild), intent.mass_c_g * w,
+                     guild.cn, guild.cp, "inoculation")  # fmt: skip
+
+    elif isinstance(intent, Amend):
+        w = blob(state.shape, intent.x, intent.y, intent.radius)
+        _import_pool(state, ledger, state.litter, intent.mass_c_g * w,
+                     COMPOST_CN, COMPOST_CP, "compost")  # fmt: skip
+
+    elif isinstance(intent, Seed):
+        w = blob(state.shape, intent.x, intent.y, intent.radius)
+        pp = params.plants
+        _import_pool(state, ledger, state.plant, intent.mass_c_g * w,
+                     pp.target_cn, pp.target_cp, "seeding")  # fmt: skip
+
+    elif isinstance(intent, PestOutbreak):
+        w = blob(state.shape, intent.x, intent.y, intent.radius)
+        ip = params.insects
+        _import_pool(state, ledger, state.insects, intent.mass_c_g * w,
+                     ip.cn, ip.cp, "migration")  # fmt: skip
+
+    elif isinstance(intent, Irrigate | Downpour):
+        added = intent.water_mm * peak_blob(state.shape, intent.x, intent.y, intent.radius)
+        water = state.water.copy()
+        water[0] += added
+        state.water = water
+        flow = "irrigation" if isinstance(intent, Irrigate) else "storm"
+        ledger.inflow("water", flow, float(added.sum()))
+
+    elif isinstance(intent, Excavate):
+        mask = np.zeros(state.shape)
+        mask[intent.y0 : intent.y1, intent.x0 : intent.x1] = intent.fraction
+        removed = {"c": 0.0, "n": 0.0, "p": 0.0}
+        for name in ("plant", "litter", "som", "bacteria", "saprotrophs", "mycorrhiza", "insects"):
+            gone = state.pool(name).take(mask)
+            for el in removed:
+                removed[el] += float(getattr(gone, el).sum())
+        dug_n, dug_p = state.mineral_n * mask, state.mineral_p * mask
+        state.mineral_n, state.mineral_p = state.mineral_n - dug_n, state.mineral_p - dug_p
+        removed["n"] += float(dug_n.sum())
+        removed["p"] += float(dug_p.sum())
+        dug = state.contaminant * mask
+        state.contaminant = state.contaminant - dug
+        ledger.outflow("c", "excavation", removed["c"], external=True)
+        ledger.outflow("n", "excavation", removed["n"])
+        ledger.outflow("p", "excavation", removed["p"])
+        ledger.outflow("contaminant", "excavation", float(dug.sum()))
 
     elif isinstance(intent, SetTradeBias):
         bias = state.trade_bias.copy()

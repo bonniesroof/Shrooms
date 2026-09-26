@@ -22,10 +22,10 @@ import numpy as np
 from sim.intents import (
     AnyIntent,
     Disturb,
+    Excavate,
     RelocateHyphae,
     SetTradeBias,
     ShuttleNutrients,
-    Spill,
     sellable,
     shuttle_cost,
 )
@@ -39,7 +39,17 @@ AUTHORITY: dict[str, frozenset[str]] = {
     "shuttle_nutrients": frozenset({"user", "mycelium"}),
     "relocate_hyphae": frozenset({"user", "mycelium"}),
     "set_trade_bias": frozenset({"user", "mycelium"}),
+    "inoculate": frozenset({"user"}),
+    "amend": frozenset({"user"}),
+    "seed": frozenset({"user"}),
+    "irrigate": frozenset({"user"}),
+    "excavate": frozenset({"user"}),
+    "pest_outbreak": frozenset({"director"}),
+    "downpour": frozenset({"director"}),
 }
+
+
+MAX_EXCAVATION_CELLS = 256
 
 
 def _target(intent: AnyIntent) -> str | None:
@@ -80,9 +90,15 @@ class Validator:
             if not (0 <= i.x0 < i.x1 <= w and 0 <= i.y0 < i.y1 <= h):
                 return [f"geometry: rectangle out of bounds for {w}x{h} grid"]
             return []
-        if isinstance(i, Spill):
+        if isinstance(i, Excavate):
+            if not (0 <= i.x0 < i.x1 <= w and 0 <= i.y0 < i.y1 <= h):
+                return [f"geometry: rectangle out of bounds for {w}x{h} grid"]
+            if (i.x1 - i.x0) * (i.y1 - i.y0) > MAX_EXCAVATION_CELLS:
+                return [f"geometry: excavation larger than {MAX_EXCAVATION_CELLS} cells"]
+            return []
+        if hasattr(i, "x") and hasattr(i, "y"):  # spills, tools and director events
             if not (0 <= i.x < w and 0 <= i.y < h):
-                return [f"geometry: spill centre out of bounds for {w}x{h} grid"]
+                return [f"geometry: {i.kind} centre out of bounds for {w}x{h} grid"]
             return []
         out = []
         for pid in (getattr(i, "from_patch", None), _target(i)):
