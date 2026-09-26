@@ -3,6 +3,8 @@
 Every carbon and water flow is booked here by name. The budget check is:
 
     carbon: total now == total at t0            (closed system: atmosphere included)
+    land C: plant + soil == t0 + gpp - autotrophic_resp - heterotrophic_resp
+            (catches small leaks the huge atmosphere pool would hide)
     water:  total now == total at t0 + in - out  (open system: rain in; ET, drainage out)
 
 Any mismatch beyond float rounding raises MassBalanceError.
@@ -25,6 +27,7 @@ class MassBalanceError(AssertionError):
 @dataclass
 class Ledger:
     carbon_t0: float
+    land_c_t0: float
     water_t0: float
     totals: dict[str, float] = field(default_factory=lambda: defaultdict(float))
 
@@ -38,10 +41,18 @@ class Ledger:
         outflow = sum(self.totals[k] for k in WATER_OUT)
         return self.water_t0 + inflow - outflow
 
-    def check(self, carbon_now: float, water_now: float, tick: int) -> None:
+    def expected_land_c(self) -> float:
+        t = self.totals
+        return self.land_c_t0 + t["gpp"] - t["autotrophic_resp"] - t["heterotrophic_resp"]
+
+    def check(self, carbon_now: float, land_c_now: float, water_now: float, tick: int) -> None:
         c_err = carbon_now - self.carbon_t0
         if abs(c_err) > RTOL * self.carbon_t0:
             raise MassBalanceError(f"tick {tick}: unexplained carbon {c_err:+.6g} g")
+        land_expected = self.expected_land_c()
+        land_err = land_c_now - land_expected
+        if abs(land_err) > RTOL * max(self.land_c_t0, land_expected, 1.0):
+            raise MassBalanceError(f"tick {tick}: unexplained carbon {land_err:+.6g} g (land)")
         w_expected = self.expected_water()
         w_err = water_now - w_expected
         if abs(w_err) > RTOL * max(self.water_t0, w_expected, 1.0):

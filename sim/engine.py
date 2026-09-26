@@ -39,7 +39,11 @@ class Simulation:
     def __post_init__(self) -> None:
         self.rng = make_streams(self.seed)
         self.state: WorldState = init_world(self.params, self.rng["init"])
-        self.ledger = Ledger(self.state.total_carbon(), self.state.total_water())
+        self.ledger = Ledger(
+            carbon_t0=self.state.total_carbon(),
+            land_c_t0=self.state.land_carbon(),
+            water_t0=self.state.total_water(),
+        )
         self.pending: dict[int, list[Disturb]] = defaultdict(list)
         self.accepted: list[Disturb] = []
         self.rejected: list[tuple[Disturb, str]] = []
@@ -80,7 +84,7 @@ class Simulation:
         s.tick += 1
 
         if self.check_balance:
-            self.ledger.check(s.total_carbon(), s.total_water(), s.tick)
+            self.ledger.check(s.total_carbon(), s.land_carbon(), s.total_water(), s.tick)
         self._record(weather, cover)
         self.last_weather = weather
 

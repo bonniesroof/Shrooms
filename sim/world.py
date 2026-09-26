@@ -28,8 +28,11 @@ class WorldState:
     def shape(self) -> tuple[int, int]:
         return self.plant_c.shape
 
+    def land_carbon(self) -> float:
+        return float(self.plant_c.sum() + self.soil_c.sum())
+
     def total_carbon(self) -> float:
-        return float(self.atmosphere_c + self.plant_c.sum() + self.soil_c.sum())
+        return self.atmosphere_c + self.land_carbon()
 
     def total_water(self) -> float:
         return float(self.soil_water.sum())
