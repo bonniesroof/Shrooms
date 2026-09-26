@@ -34,8 +34,8 @@ from sim.patches import PatchError, hops, parse, region
 from sim.world import WorldState
 
 AUTHORITY: dict[str, frozenset[str]] = {
-    "disturb": frozenset({"user", "director"}),
-    "spill": frozenset({"user", "director"}),
+    "disturb": frozenset({"user", "director", "scenario"}),
+    "spill": frozenset({"user", "director", "scenario"}),
     "shuttle_nutrients": frozenset({"user", "mycelium"}),
     "relocate_hyphae": frozenset({"user", "mycelium"}),
     "set_trade_bias": frozenset({"user", "mycelium"}),
@@ -43,13 +43,14 @@ AUTHORITY: dict[str, frozenset[str]] = {
     "amend": frozenset({"user"}),
     "seed": frozenset({"user"}),
     "irrigate": frozenset({"user"}),
-    "excavate": frozenset({"user"}),
+    "excavate": frozenset({"user", "scenario"}),
     "pest_outbreak": frozenset({"director"}),
     "downpour": frozenset({"director"}),
 }
 
 
 MAX_EXCAVATION_CELLS = 256
+UNPACED = frozenset({"user", "scenario"})  # exempt from per-tick limits and cooldowns
 
 
 def _target(intent: AnyIntent) -> str | None:
@@ -166,11 +167,11 @@ class Validator:
     def _rate(self, i: AnyIntent, history: list[AnyIntent]) -> list[str]:
         out = []
         same_tick = sum(1 for h in history if h.agent == i.agent and h.tick == i.tick)
-        if i.agent != "user" and same_tick >= self.net.max_intents_per_tick:
+        if i.agent not in UNPACED and same_tick >= self.net.max_intents_per_tick:
             out.append(f"rate: {i.agent} already has {same_tick} intents at tick {i.tick} "
                        f"(max {self.net.max_intents_per_tick})")  # fmt: skip
         target = _target(i)
-        if target and i.agent != "user":
+        if target and i.agent not in UNPACED:
             cooldown = self.net.cooldown_ticks
             recent = [
                 h for h in history
