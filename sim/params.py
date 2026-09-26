@@ -175,6 +175,24 @@ class NutrientParams(_Frozen):
     mobile_p_fraction: float = Field(0.02, ge=0.0, le=1.0)  # P binds tightly to soil
 
 
+class NetworkParams(_Frozen):
+    """Limits on the mycelial-network keystone agent's intents (see sim/validator.py)."""
+
+    patch_size: int = Field(8, ge=1)
+    min_network_c: float = Field(2.0, ge=0.0)  # mean fungal C/cell for a patch to be "on" the net
+    max_hops: int = Field(3, ge=1)
+    shuttle_cost_c_per_g_n: float = Field(2.0, ge=0.0)  # respired per g N per hop
+    shuttle_cost_c_per_g_p: float = Field(10.0, ge=0.0)
+    max_cost_fraction: float = Field(0.2, gt=0.0, le=1.0)  # of source fungal C per intent
+    max_relocate_fraction: float = Field(0.2, gt=0.0, le=1.0)
+    relocate_cost_fraction: float = Field(0.05, ge=0.0, lt=1.0)  # of moved C, respired
+    trade_bias_min: float = Field(0.5, gt=0.0)
+    trade_bias_max: float = Field(2.0, gt=0.0)
+    trade_bias_max_step: float = Field(0.25, gt=0.0)
+    max_intents_per_tick: int = Field(4, ge=1)  # per agent
+    cooldown_ticks: int = Field(336, ge=0)  # same kind, same target; > the agent's clock
+
+
 class SimParams(_Frozen):
     world: WorldParams = WorldParams()
     weather: WeatherParams = WeatherParams()
@@ -185,4 +203,5 @@ class SimParams(_Frozen):
     insects: InsectParams = InsectParams()
     contamination: ContaminationParams = ContaminationParams()
     nutrients: NutrientParams = NutrientParams()
+    network: NetworkParams = NetworkParams()
     atmosphere_initial_c: float = Field(1.0e9, gt=0.0)

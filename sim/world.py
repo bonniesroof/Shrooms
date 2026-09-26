@@ -60,6 +60,7 @@ class WorldState:
     mineral_n: np.ndarray
     mineral_p: np.ndarray
     contaminant: np.ndarray  # g
+    trade_bias: np.ndarray  # mycorrhizal price multiplier set by the network agent (1 = neutral)
     atmosphere_c: float
     temp_anomaly_c: float
     raining: bool
@@ -167,6 +168,7 @@ def init_world(params: SimParams, rng: np.random.Generator) -> WorldState:
         mineral_n=np.full(shape, params.nutrients.initial_mineral_n),
         mineral_p=np.full(shape, params.nutrients.initial_mineral_p),
         contaminant=_hotspots(shape, params, rng),
+        trade_bias=np.ones(shape),
         atmosphere_c=params.atmosphere_initial_c,
         temp_anomaly_c=0.0,
         raining=False,

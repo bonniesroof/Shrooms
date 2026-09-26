@@ -75,6 +75,7 @@ def step_mycorrhiza(
         store = np.maximum(getattr(f, el) - structural, 0.0)
         stock = store / np.maximum(structural, 1e-12)  # store relative to own needs
         price = base * np.clip(1.0 + p.price_elasticity * (demand - stock), 0.25, 4.0)
+        price = price * s.trade_bias  # the network agent's posture: <1 invests, >1 extracts
         amount = np.minimum(store * (1.0 - p.reserve_fraction), budget * share / price)
         delivered[el] = amount
         paid = paid + amount * price
