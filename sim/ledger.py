@@ -12,6 +12,9 @@ Each substance's land budget must close every tick:
 
 Carbon is also checked as a closed system with the atmosphere included, so a
 flux booked to the land but not debited from the atmosphere is caught too.
+Carbon that crosses the plot boundary without passing through the atmosphere
+(compost brought in, soil hauled away) is booked as `external` and added to
+that closed budget explicitly.
 Internal flows (litterfall, herbivory, trade...) are booked for reporting only.
 """
 
@@ -37,6 +40,7 @@ class Ledger:
     inflows: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     outflows: dict[str, float] = field(default_factory=lambda: defaultdict(float))
     internal: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    external_c: float = 0.0  # net carbon imported from off-site, not via the atmosphere
 
     def _checked(self, substance: str, flow: str, amount: float) -> str:
         if substance not in SUBSTANCES:
@@ -45,11 +49,15 @@ class Ledger:
             raise MassBalanceError(f"bad flow booked: {substance}:{flow}={amount}")
         return _key(substance, flow)
 
-    def inflow(self, substance: str, flow: str, amount: float) -> None:
+    def inflow(self, substance: str, flow: str, amount: float, external: bool = False) -> None:
         self.inflows[self._checked(substance, flow, amount)] += amount
+        if external and substance == "c":
+            self.external_c += amount
 
-    def outflow(self, substance: str, flow: str, amount: float) -> None:
+    def outflow(self, substance: str, flow: str, amount: float, external: bool = False) -> None:
         self.outflows[self._checked(substance, flow, amount)] += amount
+        if external and substance == "c":
+            self.external_c -= amount
 
     def move(self, substance: str, flow: str, amount: float) -> None:
         self.internal[self._checked(substance, flow, amount)] += amount
@@ -73,7 +81,7 @@ class Ledger:
             want, got = self.expected(s), totals[s]
             if abs(got - want) > RTOL * max(abs(self.t0[s]), abs(want), 1.0):
                 raise MassBalanceError(f"tick {tick}: unexplained {s} {got - want:+.6g}")
-        closed = self.atmosphere_c0 + self.t0["c"]
+        closed = self.atmosphere_c0 + self.t0["c"] + self.external_c
         if abs(atmosphere_c + totals["c"] - closed) > RTOL * closed:
             raise MassBalanceError(
                 f"tick {tick}: unexplained c (closed) {atmosphere_c + totals['c'] - closed:+.6g}"
