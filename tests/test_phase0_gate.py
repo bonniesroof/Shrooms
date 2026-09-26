@@ -45,7 +45,7 @@ def test_replay_is_bit_identical(year_run, tmp_path):
     assert loaded == record
 
     replayed = replay(loaded)
-    assert replayed.state.state_hash() == record.final_hash
+    assert replayed.state_hash() == record.final_hash
     for name in ("plant_c", "soil_c", "soil_water"):
         np.testing.assert_array_equal(getattr(replayed.state, name), getattr(sim.state, name))
 

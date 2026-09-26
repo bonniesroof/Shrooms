@@ -25,12 +25,21 @@ def test_extra_draws_in_one_system_do_not_shift_another():
     assert s1.last_weather == s2.last_weather
 
 
+def test_hash_catches_rng_drift_before_state_diverges():
+    a, b = Simulation(3), Simulation(3)
+    b.rng["plants"].random(10)  # drifted stream, no state change yet
+    a.run(24)
+    b.run(24)
+    assert a.state.state_hash() == b.state.state_hash()  # world alone can't tell
+    assert a.state_hash() != b.state_hash()
+
+
 def test_same_seed_same_state_different_seed_differs():
     a, b, c = Simulation(5), Simulation(5), Simulation(6)
     for sim in (a, b, c):
         sim.run(200)
-    assert a.state.state_hash() == b.state.state_hash()
-    assert a.state.state_hash() != c.state.state_hash()
+    assert a.state_hash() == b.state_hash()
+    assert a.state_hash() != c.state_hash()
 
 
 def test_weather_is_plausible():

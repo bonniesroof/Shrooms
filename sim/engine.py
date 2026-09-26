@@ -8,6 +8,8 @@ One tick = one sim-hour. Order within a tick is fixed:
     5. mass-balance check
 """
 
+import hashlib
+import json
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -88,14 +90,25 @@ class Simulation:
         self._record(weather, cover)
         self.last_weather = weather
 
+    def state_hash(self) -> str:
+        """World state hash plus every RNG stream's position.
+
+        The world hash alone can miss divergence: a stream that has drifted but
+        whose draws haven't changed any state yet (e.g. rare disturbances).
+        """
+        h = hashlib.sha256(self.state.state_hash().encode())
+        for name in sorted(self.rng):
+            h.update(json.dumps(self.rng[name].bit_generator.state, sort_keys=True).encode())
+        return h.hexdigest()
+
     def run(self, ticks: int, checkpoint_every: int = 0) -> dict[int, str]:
         """Advance `ticks` ticks. Returns {tick: state hash} at each checkpoint and the end."""
         checkpoints: dict[int, str] = {}
         for _ in range(ticks):
             self.step()
             if checkpoint_every and self.state.tick % checkpoint_every == 0:
-                checkpoints[self.state.tick] = self.state.state_hash()
-        checkpoints[self.state.tick] = self.state.state_hash()
+                checkpoints[self.state.tick] = self.state_hash()
+        checkpoints[self.state.tick] = self.state_hash()
         return checkpoints
 
     def _record(self, weather: Weather, cover: np.ndarray) -> None:

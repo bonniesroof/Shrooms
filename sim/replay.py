@@ -77,7 +77,7 @@ def replay(record: ReplayRecord) -> Simulation:
     previous = 0
     for tick in sorted(record.checkpoints):
         sim.run(tick - sim.state.tick)
-        got = sim.state.state_hash()
+        got = sim.state_hash()
         if got != record.checkpoints[tick]:
             raise ReplayMismatch(f"diverged between tick {previous} and {tick}")
         previous = tick
