@@ -21,6 +21,7 @@ before roots, as in real soils where microbes out-compete plants short term.
 
 import hashlib
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -31,16 +32,20 @@ from sim import SIM_VERSION
 from sim.contamination import degrade, toxicity
 from sim.decomposers import step_decomposers
 from sim.env import DT, TickContext
+from sim.events import EventDetector, EventLog, date_label
 from sim.hydrology import Hydrology, Solutes
 from sim.insects import step_insects
-from sim.intents import Disturb, InvalidIntent, Spill, apply, validate
+from sim.intents import AnyIntent, apply
 from sim.ledger import Ledger
 from sim.mycorrhiza import step_mycorrhiza
 from sim.params import SimParams
 from sim.plants import canopy_cover, disperse_pool, photosynthesis, root_uptake, turnover
 from sim.rng import make_streams
+from sim.validator import Validator
 from sim.weather import Weather, step_weather
 from sim.world import POOLS, WorldState, init_world
+
+log = logging.getLogger("shrooms.sim")
 
 HISTORY_FIELDS = (
     "temp_c", "shortwave", "rain_mm", "atmosphere_c", "soil_water", "canopy_cover",
@@ -60,9 +65,12 @@ class Simulation:
         self.state: WorldState = init_world(self.params, self.rng["init"])
         self.hydrology = Hydrology(self.state.elevation, self.params)
         self.ledger = Ledger(self.totals(), self.state.atmosphere_c)
-        self.pending: dict[int, list[Disturb | Spill]] = defaultdict(list)
-        self.accepted: list[Disturb | Spill] = []
-        self.rejected: list[tuple[Disturb | Spill, str]] = []
+        self.validator = Validator(self.params)
+        self.events = EventLog()
+        self.detector = EventDetector(float(self.state.contaminant.sum()), self.state.plant.c.size)
+        self.pending: dict[int, list[AnyIntent]] = defaultdict(list)
+        self.accepted: list[AnyIntent] = []
+        self.rejected: list[tuple[AnyIntent, str]] = []
         self.history: dict[str, list[float]] = {k: [] for k in HISTORY_FIELDS}
         self.last_weather: Weather | None = None
         self.version = SIM_VERSION
@@ -77,24 +85,38 @@ class Simulation:
             "contaminant": float(s.contaminant.sum()),
         }
 
-    def submit(self, intents: Iterable[Disturb | Spill]) -> None:
+    def submit(self, intents: Iterable[AnyIntent]) -> None:
         for intent in intents:
             if intent.tick < self.state.tick:
-                self.rejected.append((intent, "scheduled in the past"))
+                self._reject(intent, ["scheduled in the past"])
             else:
                 self.pending[intent.tick].append(intent)
+                log.debug("queued %s from %s for tick %d", intent.kind, intent.agent, intent.tick)
+
+    def _reject(self, intent: AnyIntent, violations: list[str]) -> None:
+        reason = "; ".join(violations)
+        self.rejected.append((intent, reason))
+        log.warning("REJECTED %s from %s at tick %d: %s", intent.kind, intent.agent,
+                    intent.tick, reason)  # fmt: skip
+        message = f"{intent.agent}'s {intent.kind} was refused: {violations[0]}"
+        self.events.emit(
+            self.state.tick, "intent_rejected", message, agent=intent.agent, intent=intent.kind
+        )
 
     def step(self) -> None:
         s, p = self.state, self.params
 
         for intent in self.pending.pop(s.tick, []):
-            try:
-                validate(intent, s)
-            except InvalidIntent as err:
-                self.rejected.append((intent, str(err)))
+            violations = self.validator.check(intent, s, self.accepted)
+            if violations:
+                self._reject(intent, violations)
                 continue
-            apply(intent, s, self.ledger)
+            apply(intent, s, self.ledger, p)
             self.accepted.append(intent)
+            log.info("APPLIED %s from %s at tick %d (%s)", intent.kind, intent.agent, s.tick,
+                     describe(intent))  # fmt: skip
+            self.events.emit(s.tick, "intent_applied", f"{intent.agent}: {describe(intent)}",
+                             agent=intent.agent, intent=intent.kind)  # fmt: skip
 
         weather, s.temp_anomaly_c, s.raining = step_weather(
             s.tick, s.temp_anomaly_c, s.raining, p.weather, self.rng["weather"]
@@ -135,6 +157,31 @@ class Simulation:
             self.ledger.check(self.totals(), s.atmosphere_c, s.tick)
         self._record(weather, cover, gpp, delivered, paid)
         self.last_weather = weather
+        self.detector.daily(self, self.events)
+        if s.tick % 24 == 0 and log.isEnabledFor(logging.DEBUG):
+            h, n = self.history, s.plant.c.size
+            log.debug(
+                "%s tick=%d T=%.1fC rain=%.1fmm moist=%.2f | plant=%.0f bact=%.1f sapro=%.1f "
+                "myco=%.1f insect=%.2f som=%.0f | minN=%.3f trade=%.2fgC contam=%.0fg",
+                date_label(s.tick),
+                s.tick,
+                sum(h["temp_c"][-24:]) / 24,
+                sum(h["rain_mm"][-24:]),
+                s.moisture().mean(),
+                s.plant.c.mean(),
+                s.bacteria.c.mean(),
+                s.saprotrophs.c.mean(),
+                s.mycorrhiza.c.mean(),
+                s.insects.c.mean(),
+                s.som.c.mean(),
+                s.mineral_n.mean(),
+                sum(h["trade_c"][-24:]) / n,
+                s.contaminant.sum(),
+            )
+
+    def run_until(self, tick: int) -> None:
+        while self.state.tick < tick:
+            self.step()
 
     def state_hash(self) -> str:
         """World state hash plus every RNG stream's position.
@@ -174,3 +221,19 @@ class Simulation:
         h["trade_p"].append(float(delivered["p"].sum()))
         for pool in POOLS:
             h[f"{pool}_c"].append(s.pool(pool).total("c"))
+
+
+def describe(intent: AnyIntent) -> str:
+    """One-line human summary of an intent."""
+    k = intent.kind
+    if k == "shuttle_nutrients":
+        return (f"shuttle {intent.amount_g:.2f} g {intent.element.upper()} "
+                f"{intent.from_patch}->{intent.to_patch}")  # fmt: skip
+    if k == "relocate_hyphae":
+        return f"relocate {intent.fraction:.0%} of hyphae {intent.from_patch}->{intent.to_patch}"
+    if k == "set_trade_bias":
+        return f"set trade bias {intent.bias:.2f} in {intent.patch}"
+    if k == "spill":
+        return f"spill {intent.mass_g:.0f} g at ({intent.x:.0f},{intent.y:.0f})"
+    box = f"x{intent.x0}-{intent.x1} y{intent.y0}-{intent.y1}"
+    return f"disturb {intent.fraction:.0%} of plants in {box}"
