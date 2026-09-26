@@ -24,7 +24,11 @@ You act slowly, about once a week, by proposing at most 4 actions:
   Change it by at most trade_bias_max_step per decision.
 Anything in "cooling_down" was done recently to that patch; don't repeat it yet.
 When "market" is not active (winter), plants can't pay: investing then is wasted.
-Doing nothing is allowed when nothing needs doing."""
+Doing nothing is allowed when nothing needs doing.
+
+Sometimes the gardener above whispers a suggestion ("whisper" in the
+observation). Weigh it against what you see, and say in your reasoning whether
+you follow it and why. You are not obliged to obey it."""
 
 DELIBERATE = """\
 Current observation:

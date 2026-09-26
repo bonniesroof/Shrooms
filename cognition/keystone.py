@@ -64,6 +64,7 @@ class MyceliumAgent:
         self.sim: Simulation | None = None
         self.watch: list[dict] = []  # committed actions whose outcome we report next time
         self.traces: list[dict] = []
+        self.pending_whisper: str | None = None  # human-in-the-loop suggestion for next decision
         g = StateGraph(KeystoneState)
         for node in ("observe", "deliberate", "propose", "validate", "commit"):
             g.add_node(node, getattr(self, f"_{node}"))
@@ -77,8 +78,14 @@ class MyceliumAgent:
 
     # --- public -------------------------------------------------------------
 
+    def whisper(self, text: str) -> None:
+        """Queue a suggestion from the player; the next decision sees it once."""
+        self.pending_whisper = text.strip()[:300] or None
+
     def decide(self, sim: Simulation) -> list:
         self.sim = sim
+        whisper, self.pending_whisper = self.pending_whisper, None
+        self._whisper = whisper
         log.info("--- decision at %s (tick %d) ---", date_label(sim.state.tick), sim.state.tick)
         final = self.graph.invoke(
             {
@@ -93,7 +100,8 @@ class MyceliumAgent:
         )
         committed = [INTENT.validate_python(d) for d in final["accepted"]]
         self.traces.append(
-            {
+            {"whisper": whisper}
+            | {
                 k: final.get(k)
                 for k in (
                     "tick",
@@ -119,6 +127,8 @@ class MyceliumAgent:
 
     def _observe(self, state: KeystoneState) -> dict:
         obs = observe_mycelium(self.sim, self._outcomes(), self.latency)
+        if getattr(self, "_whisper", None):
+            obs["whisper"] = self._whisper
         log.info(
             "observe: %d/%d patches on network; neediest %s; richest store %s",
             obs["network"]["patches_on_network"],

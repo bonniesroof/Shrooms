@@ -7,6 +7,7 @@ their job is to be predictable, not clever.
 """
 
 import json
+import re
 
 from sim.patches import PATCH_ID
 
@@ -16,24 +17,53 @@ def _hops(a: str, b: str) -> int:
     return abs(ra - rb) + abs(ca - cb)
 
 
-def mycelium(role: str, messages: list[dict], context: dict) -> str:
-    obs = context["observation"]
-    blocked = set(context.get("blocked", [])) | set(obs["cooling_down"])
-    if context["step"] == "deliberate":
-        if not obs["market"]["active"]:
-            return (
-                "The plants are not trading; nothing pays now. I will hold my stores and "
-                "only pull hyphae out of contaminated ground."
-            )
-        if not obs["needy_partners"]:
-            return "No partner is short of nutrients; I will hold my stores."
-        top = obs["needy_partners"][0]
-        return (
-            f"Partners in {top['patch']} are the hungriest (C:N {top['plant_cn']}). "
-            "I will route stored nutrients to them from the nearest rich patch and "
-            "lower my price there, and pull hyphae away from contaminated ground."
-        )
+PATCH_IN_TEXT = re.compile(r"\br\d+c\d+\b")
 
+
+def _heed_whisper(obs: dict) -> tuple[dict, str]:
+    """Move any needy patch the gardener named to the front of the queue."""
+    text = obs.get("whisper")
+    if not text:
+        return obs, ""
+    named = [m.group(0) for m in PATCH_IN_TEXT.finditer(text.lower())]
+    needy = obs["needy_partners"]
+    hit = [n for n in needy if n["patch"] in named]
+    if hit:
+        rest = [n for n in needy if n["patch"] not in named]
+        obs = {**obs, "needy_partners": hit + rest}
+        return obs, (f'The gardener whispered "{text}"; {hit[0]["patch"]} is indeed '
+                     "hungry, so I start there. ")  # fmt: skip
+    if named:
+        return obs, (f'The gardener whispered "{text}", but {named[0]} is not short of '
+                     "nutrients on my network, so I won't act there. ")  # fmt: skip
+    return obs, f'The gardener whispered "{text}"; I note it. '
+
+
+def mycelium(role: str, messages: list[dict], context: dict) -> str:
+    obs, heard = _heed_whisper(context["observation"])
+    if context["step"] == "deliberate":
+        return heard + _deliberate(obs)
+    return _propose(obs, context)
+
+
+def _deliberate(obs: dict) -> str:
+    if not obs["market"]["active"]:
+        return (
+            "The plants are not trading; nothing pays now. I will hold my stores and "
+            "only pull hyphae out of contaminated ground."
+        )
+    if not obs["needy_partners"]:
+        return "No partner is short of nutrients; I will hold my stores."
+    top = obs["needy_partners"][0]
+    return (
+        f"Partners in {top['patch']} are the hungriest (C:N {top['plant_cn']}). "
+        "I will route stored nutrients to them from the nearest rich patch and "
+        "lower my price there, and pull hyphae away from contaminated ground."
+    )
+
+
+def _propose(obs: dict, context: dict) -> str:
+    blocked = set(context.get("blocked", [])) | set(obs["cooling_down"])
     limits = obs["limits"]
     intents: list[dict] = []
     trading = obs["market"]["active"]  # no point investing while no plant can pay
