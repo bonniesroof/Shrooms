@@ -20,9 +20,16 @@ def year_run():
 
 
 def small_params(**sections) -> SimParams:
-    """A 16x16 world for fast unit tests, with optional section overrides."""
+    """A 16x16 world for fast unit tests. Overrides may be models or dicts of fields,
+    e.g. small_params(world={"width": 32, "height": 32})."""
     base = SimParams(world=WorldParams(width=16, height=16))
-    return base.model_copy(update=sections)
+    update = {
+        name: getattr(base, name).model_copy(update=value) if isinstance(value, dict) else value
+        for name, value in sections.items()
+    }
+    return SimParams.model_validate(
+        {**base.model_dump(), **{k: v.model_dump() for k, v in update.items()}}
+    )
 
 
 @pytest.fixture

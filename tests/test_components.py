@@ -92,7 +92,9 @@ def test_disturb_moves_all_plant_elements_to_litter(small_sim):
     s = small_sim.state
     before = {el: getattr(s.plant, el)[:4, :4].sum() + getattr(s.litter, el)[:4, :4].sum()
               for el in "cnp"}  # fmt: skip
-    apply(Disturb(tick=0, x0=0, y0=0, x1=4, y1=4, fraction=1.0), s, small_sim.ledger)
+    apply(
+        Disturb(tick=0, x0=0, y0=0, x1=4, y1=4, fraction=1.0), s, small_sim.ledger, small_sim.params
+    )
     assert s.plant.c[:4, :4].max() == 0.0
     for el in "cnp":
         after = getattr(s.litter, el)[:4, :4].sum()
