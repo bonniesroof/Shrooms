@@ -6,6 +6,7 @@ uv run python -m sim.run --replay runs/seed42.json
 """
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -16,6 +17,7 @@ from pydantic import TypeAdapter
 from sim import SIM_VERSION, TICKS_PER_YEAR
 from sim.intents import Intent
 from sim.replay import ReplayMismatch, ReplayRecord, record_run, replay
+from sim.world import POOLS
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,7 +45,11 @@ def main(argv: list[str] | None = None) -> int:
             raw = json.loads(args.intents.read_text())
             intents = TypeAdapter(list[Intent]).validate_python(raw)
         sim, record = record_run(args.seed, args.ticks, intents=intents)
-        path = args.out / f"seed{args.seed}_t{args.ticks}.json"
+        stem = f"seed{args.seed}_t{args.ticks}"
+        if record.intents:  # different intents must not overwrite each other's records
+            blob = json.dumps([i.model_dump() for i in record.intents], sort_keys=True)
+            stem += "_i" + hashlib.sha256(blob.encode()).hexdigest()[:8]
+        path = args.out / f"{stem}.json"
         record.save(path)
         print(f"sim {SIM_VERSION} seed {args.seed}: {args.ticks} ticks -> {path}")
         for intent, reason in sim.rejected:
@@ -52,15 +58,20 @@ def main(argv: list[str] | None = None) -> int:
     elapsed = time.perf_counter() - start
     s = sim.state
     print(
-        f"  {elapsed:.1f}s ({sim.state.tick / max(elapsed, 1e-9):.0f} ticks/s)  "
-        f"plant C {s.plant_c.mean():.0f} g/cell  soil C {s.soil_c.mean():.0f} g/cell  "
-        f"water {s.soil_water.mean():.0f} mm  carbon balance OK"
+        f"  {elapsed:.1f}s ({s.tick / max(elapsed, 1e-9):.0f} ticks/s)  "
+        "mass balance OK (C, N, P, water, contaminant)"
+    )
+    print("  mean g C/cell: " + "  ".join(f"{name} {s.pool(name).c.mean():.1f}" for name in POOLS))
+    print(
+        f"  mineral N {s.mineral_n.mean():.3f}  mineral P {s.mineral_p.mean():.4f} g/cell  "
+        f"contaminant {s.contaminant.sum():.0f} g  moisture {s.moisture().mean():.2f}"
     )
 
     if not args.headless:
         from sim.viewer import save_views
 
-        for p in save_views(sim, args.out, stem=f"seed{sim.seed}_t{sim.state.tick}"):
+        stem = args.replay.stem if args.replay else path.stem
+        for p in save_views(sim, args.out, stem=stem):
             print(f"  wrote {p}")
     return 0
 
