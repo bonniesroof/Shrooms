@@ -10,7 +10,7 @@ Shrooms is a **learning sandbox first**. Each part of it teaches one of three sk
 
 ## Status
 
-Pre-alpha. Phase 0 (foundations). See [ROADMAP.md](ROADMAP.md).
+**Phase 0 (foundations) complete.** A 64×64 world runs a year in about 2.5 s headless. It has weather, soil water, and plants with explicit carbon pools. Every run replays bit-identically from its record, and carbon and water balances are checked every tick. Next up is Phase 1 (living soil). See [ROADMAP.md](ROADMAP.md).
 
 ## Core design rules
 
@@ -30,36 +30,62 @@ PixiJS client  ⇄  FastAPI/WebSocket  ⇄  Sim core (tick loop + rule agents)
 
 ## Repo layout
 
+What exists today:
+
 ```
-sim/          deterministic core: world, agents, interactions, scenarios, engine
-cognition/    LangGraph agents: narrator, keystone overlays, director
-worldmodel/   graph builder, GNN baseline, JEPA, prediction heads, planners
-server/       FastAPI + WebSocket bridge
-client/       PixiJS game
-notebooks/    one learning notebook per phase
-tests/        unit, replay-determinism and mass-balance tests
-data/         trajectory store (gitignored)
+sim/                deterministic core
+  engine.py         tick loop: intents → weather → water → carbon → balance check
+  world.py          grid state (per-cell float64 arrays) and world hashing
+  params.py         every tunable number, as frozen Pydantic models
+  rng.py            one seeded PCG64 stream per system
+  weather.py        seasonal/diurnal temperature, shortwave, Markov rain
+  water.py          soil water bucket per cell
+  plants.py         plant and soil carbon pools and flows, dispersal
+  ledger.py         mass-balance ledger (C and water)
+  intents.py        typed intents + validator (Phase 0: `disturb`)
+  replay.py         replay records and verification
+  viewer.py         thin matplotlib debug viewer
+  run.py            CLI
+client/             pnpm + Vite + PixiJS stub (real views in Phase 3)
+notebooks/          phase0_foundations.ipynb
+tests/              Phase 0 gate, replay-determinism and mass-balance tests
+data/               trajectory store (gitignored)
 ```
+
+Planned: `cognition/` (LangGraph agents, Phase 2), `server/` (FastAPI + WebSocket, Phase 3), `worldmodel/` (graphs, GNN, JEPA, Phases 4–6).
 
 ## Stack
 
-Python 3.12 (NumPy, Numba, Pydantic, FastAPI, LangGraph, PyTorch Geometric) · TypeScript (Vite, PixiJS) · Parquet + DuckDB · uv, pnpm, Docker Compose, GitHub Actions.
+In use: Python 3.12 (NumPy, Pydantic, matplotlib) · TypeScript (Vite, PixiJS) · uv, pnpm, pre-commit, GitHub Actions.
+
+Planned: Numba, FastAPI, LangGraph, PyTorch Geometric, Parquet + DuckDB, Docker Compose.
 
 ## Getting started
 
-*Planned. These commands will work once Phase 0 lands.*
-
 ```bash
-uv sync                           # Python deps
-uv run python -m sim.run --seed 42 --ticks 8760 --headless
-uv run pytest                     # includes replay + mass-balance tests
-cd client && pnpm install && pnpm dev
+uv sync                                                        # Python deps
+uv run python -m sim.run --seed 42 --ticks 8760 --headless     # 1-year run -> runs/seed42_t8760.json
+uv run python -m sim.run --seed 42 --ticks 8760                # same, plus debug-viewer PNGs in runs/
+uv run python -m sim.run --replay runs/seed42_t8760.json       # verify bit-identical replay
+uv run pytest                                                  # gate, replay and mass-balance tests
+uv run pre-commit install                                      # ruff lint + format on commit
 ```
+
+Submit intents from a JSON file with `--intents`, for example a clearing at tick 2000:
+
+```json
+[{"kind": "disturb", "tick": 2000, "x0": 16, "y0": 16, "x1": 48, "y1": 48, "fraction": 1.0}]
+```
+
+Notebook: `uv sync --group notebooks && uv run jupyter lab`, then open `notebooks/phase0_foundations.ipynb`.
+
+Client stub: `cd client && pnpm install && pnpm dev`.
 
 ## Docs
 
 - **Spec:** full design, including agents, environment, orchestration and world model (link TBD)
 - **[ROADMAP.md](ROADMAP.md):** phased development plan
+- **[Phase 0 notebook](notebooks/phase0_foundations.ipynb):** what was built, determinism, the carbon budget, and what broke
 
 ## Contributing
 
