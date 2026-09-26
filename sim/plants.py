@@ -1,102 +1,85 @@
-"""Plants and soil carbon.
+"""Plants: photosynthesis, respiration, root nutrient uptake, turnover, disturbance.
 
-Carbon pools per cell: plant_c (living biomass) and soil_c (litter + organic
-matter). The atmosphere is one scalar pool. Flows:
-
-    atmosphere --gpp--------------> plant
-    plant ------autotrophic_resp--> atmosphere
-    plant ------litterfall--------> soil
-    plant ------disturbance-------> soil
-    soil -------heterotrophic_resp> atmosphere
-    plant ------dispersal---------> neighbouring plant (internal, conserves C)
-
-Every flow is computed from pre-tick state, capped so no pool goes negative,
-then applied as an exact subtract-from-source / add-to-sink pair.
+Plant stoichiometry is flexible. Growth slows as N:C or P:C falls below target,
+so nutrients limit carbon gain. N and P come from root uptake and from
+mycorrhizal trade (see mycorrhiza.py). Before litterfall, plants resorb a share
+of leaf N and P, so litter is poorer in nutrients than living tissue.
 """
 
 import numpy as np
 
-from sim.ledger import Ledger
-from sim.params import PlantParams, SoilParams
-from sim.weather import Weather
+from sim.env import DT, TickContext, q10
+from sim.params import PlantParams
+from sim.transport import route, saturating, uniform_fractions
+from sim.world import Pool, WorldState
 
 
 def canopy_cover(plant_c: np.ndarray, p: PlantParams) -> np.ndarray:
     return 1.0 - np.exp(-p.cover_k * plant_c)
 
 
-def _q10(temp_c: float, q10: float) -> float:
-    return q10 ** ((temp_c - 20.0) / 10.0)
+def nutrient_ratios(plant: Pool, p: PlantParams) -> tuple[np.ndarray, np.ndarray]:
+    """N and P content relative to target (1 = on target). Bare cells count as satisfied."""
+    safe_c = np.maximum(plant.c, 1e-9)
+    has = plant.c > 1e-9
+    rn = np.where(has, plant.n * p.target_cn / safe_c, 1.0)
+    rp = np.where(has, plant.p * p.target_cp / safe_c, 1.0)
+    return rn, rp
 
 
-def disperse(plant_c: np.ndarray, rate: float) -> np.ndarray:
-    """Each cell exports `rate` of its biomass, split evenly among its 4-neighbours.
+def photosynthesis(s: WorldState, p: PlantParams, ctx: TickContext) -> np.ndarray:
+    """Fix carbon from the atmosphere into plants; respire maintenance. Returns GPP."""
+    wx = ctx.weather
+    rn, rp = nutrient_ratios(s.plant, p)
+    f_nut = np.clip(np.minimum(rn, rp), 0.0, 1.0)
+    cover = canopy_cover(s.plant.c, p)
+    f_temp = np.exp(-(((wx.temp_c - p.temp_opt_c) / p.temp_width_c) ** 2))
+    f_water = np.clip(ctx.moisture / p.water_stress_fraction, 0.0, 1.0)
+    f_crowd = np.clip(1.0 - s.plant.c / p.max_c, 0.0, 1.0)
+    gpp = p.light_use_efficiency * wx.shortwave * cover * f_temp * f_water * f_crowd
+    gpp = gpp * f_nut * ctx.toxicity
 
-    Non-wrapping edges: edge cells split among fewer neighbours, so nothing leaves
-    the grid. Conserves carbon up to float rounding.
-    """
-    h, w = plant_c.shape
-    neighbours = np.full((h, w), 4.0)
-    neighbours[0, :] -= 1
-    neighbours[-1, :] -= 1
-    neighbours[:, 0] -= 1
-    neighbours[:, -1] -= 1
-
-    share = plant_c * rate / neighbours
-    out = plant_c - share * neighbours
-    out[1:, :] += share[:-1, :]  # from north
-    out[:-1, :] += share[1:, :]  # from south
-    out[:, 1:] += share[:, :-1]  # from west
-    out[:, :-1] += share[:, 1:]  # from east
-    return out
+    resp = np.minimum(s.plant.c * p.respiration_per_day * DT * q10(wx.temp_c, p.q10), s.plant.c)
+    s.plant.c = s.plant.c + gpp - resp
+    ctx.fix_carbon("gpp", gpp)
+    ctx.respire("resp_plant", resp)
+    return gpp
 
 
-def step_carbon(
-    plant_c: np.ndarray,
-    soil_c: np.ndarray,
-    atmosphere_c: float,
-    soil_water: np.ndarray,
-    water_capacity: np.ndarray,
-    weather: Weather,
-    pp: PlantParams,
-    sp: SoilParams,
-    rng: np.random.Generator,
-    ledger: Ledger,
-) -> tuple[np.ndarray, np.ndarray, float]:
-    moisture = np.clip(soil_water / water_capacity, 0.0, 1.0)
+def root_uptake(s: WorldState, p: PlantParams, ctx: TickContext) -> None:
+    """Roots take mineral N and P from what decomposers and fungi left."""
+    rn, rp = nutrient_ratios(s.plant, p)
+    f_water = np.clip(ctx.moisture / p.water_stress_fraction, 0.0, 1.0)
+    up_n = p.root_uptake_n_per_day * DT * s.plant.c * saturating(s.mineral_n, p.root_half_sat_n)
+    up_p = p.root_uptake_p_per_day * DT * s.plant.c * saturating(s.mineral_p, p.root_half_sat_p)
+    up_n = np.minimum(up_n * f_water * np.clip(1.2 - rn, 0.0, 1.0), s.mineral_n)
+    up_p = np.minimum(up_p * f_water * np.clip(1.2 - rp, 0.0, 1.0), s.mineral_p)
+    s.mineral_n = s.mineral_n - up_n
+    s.mineral_p = s.mineral_p - up_p
+    s.plant.n = s.plant.n + up_n
+    s.plant.p = s.plant.p + up_p
+    ctx.move("n", "root_uptake", up_n)
+    ctx.move("p", "root_uptake", up_p)
 
-    # Gross primary production: light x cover x temperature x water x crowding.
-    cover = canopy_cover(plant_c, pp)
-    f_temp = np.exp(-(((weather.temp_c - pp.temp_opt_c) / pp.temp_width_c) ** 2))
-    f_water = np.clip(moisture / pp.water_stress_fraction, 0.0, 1.0)
-    f_crowd = np.clip(1.0 - plant_c / pp.max_c, 0.0, 1.0)
-    gpp = pp.light_use_efficiency * weather.shortwave * cover * f_temp * f_water * f_crowd
-    gpp = np.minimum(gpp, atmosphere_c / gpp.size)  # never draw the atmosphere negative
 
-    # Losses from pre-tick plant biomass, capped to what exists.
-    ra = plant_c * pp.respiration_rate_20c * _q10(weather.temp_c, pp.q10)
-    litter = plant_c * pp.turnover_rate
-    struck = rng.random(plant_c.shape) < pp.disturbance_prob
-    disturbed = np.where(struck, plant_c * pp.disturbance_severity, 0.0)
-    losses = ra + litter + disturbed
-    scale = np.where(losses > plant_c, plant_c / np.maximum(losses, 1e-300), 1.0)
-    ra, litter, disturbed = ra * scale, litter * scale, disturbed * scale
+def turnover(s: WorldState, p: PlantParams, rng: np.random.Generator, ctx: TickContext) -> None:
+    """Litterfall (with nutrient resorption) and random disturbance, both to litter."""
+    frac = p.turnover_per_day * DT
+    fall = Pool(s.plant.c * frac, s.plant.n * frac * (1 - p.resorption),
+                s.plant.p * frac * (1 - p.resorption))  # fmt: skip
+    s.plant.c = s.plant.c - fall.c
+    s.plant.n = s.plant.n - fall.n
+    s.plant.p = s.plant.p - fall.p
+    s.litter.add(fall)
+    ctx.move("c", "litterfall", fall.c)
 
-    # Decomposition: temperature and moisture limited.
-    rh = soil_c * sp.decomposition_rate_20c * _q10(weather.temp_c, sp.q10) * moisture
-    rh = np.minimum(rh, soil_c)
+    struck = rng.random(s.shape) < p.disturbance_prob
+    knocked = s.plant.take(np.where(struck, p.disturbance_severity, 0.0))
+    s.litter.add(knocked)
+    ctx.move("c", "disturbance", knocked.c)
 
-    plant_c = plant_c + gpp - ra - litter - disturbed
-    soil_c = soil_c + litter + disturbed - rh
-    atmosphere_c = atmosphere_c - float(gpp.sum()) + float(ra.sum()) + float(rh.sum())
-    plant_c = disperse(plant_c, pp.dispersal_rate)
 
-    for name, flow in (
-        ("gpp", gpp),
-        ("autotrophic_resp", ra),
-        ("litterfall", litter),
-        ("disturbance", disturbed),
-        ("heterotrophic_resp", rh),
-    ):
-        ledger.book(name, float(flow.sum()))
-    return plant_c, soil_c, atmosphere_c
+def disperse_pool(pool: Pool, rate: float) -> None:
+    """Spread a share of a pool to its neighbours, all elements in proportion."""
+    moved = route(np.stack([pool.c, pool.n, pool.p]), uniform_fractions(pool.c.shape, rate))
+    pool.c, pool.n, pool.p = moved[0], moved[1], moved[2]
