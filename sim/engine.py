@@ -12,7 +12,7 @@ One tick = one sim-hour. Order within a tick is fixed:
     8. roots take up what nutrients remain
     9. plant litterfall and disturbance
    10. insects feed, excrete, die and disperse
-   11. plant dispersal; N deposition and P weathering
+   11. plant and microbial dispersal; N deposition and P weathering
    12. mass-balance check for C, N, P, water and contaminant
 
 The order sets who gets first claim on shared pools: microbes before fungi
@@ -142,6 +142,11 @@ class Simulation:
         turnover(s, p.plants, self.rng["plants"], ctx)
         step_insects(s, p.insects, ctx)
         disperse_pool(s.plant, p.plants.dispersal_per_day * DT)
+        for name, guild in (("bacteria", p.decomposers.bacteria),
+                            ("saprotrophs", p.decomposers.saprotrophs),
+                            ("mycorrhiza", p.mycorrhiza.guild)):  # fmt: skip
+            if guild.dispersal_per_day:  # hyphal growth and cell spread
+                disperse_pool(s.pool(name), guild.dispersal_per_day * DT)
 
         dep = p.nutrients.n_deposition_per_day * DT
         weathering = p.nutrients.p_weathering_per_day * DT

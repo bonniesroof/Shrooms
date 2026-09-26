@@ -90,16 +90,19 @@ class MicrobeParams(_Frozen):
     moisture_opt: float = Field(gt=0.0, le=1.0)
     death_per_day: float = Field(ge=0.0)
     crowding_c: float = Field(gt=0.0)  # density at which death doubles
+    dispersal_per_day: float = Field(0.0, ge=0.0, le=1.0)  # hyphal growth / cell spread
 
 
 class DecomposerParams(_Frozen):
     bacteria: MicrobeParams = MicrobeParams(
         initial_c=10.0, cn=5.0, cp=40.0, uptake_per_day=0.5, half_sat_c=300.0,
         cue=0.35, moisture_opt=0.7, death_per_day=0.01, crowding_c=150.0,
+        dispersal_per_day=0.02,
     )  # fmt: skip
     saprotrophs: MicrobeParams = MicrobeParams(
         initial_c=15.0, cn=10.0, cp=80.0, uptake_per_day=0.3, half_sat_c=300.0,
         cue=0.45, moisture_opt=0.45, death_per_day=0.006, crowding_c=150.0,
+        dispersal_per_day=0.08,
     )  # fmt: skip
     q10: float = Field(2.2, gt=0.0)
     litter_cn_sapro_pref: float = Field(40.0, gt=0.0)  # litter C:N where saprotrophs win half
@@ -120,6 +123,7 @@ class MycorrhizaParams(_Frozen):
     guild: MicrobeParams = MicrobeParams(
         initial_c=15.0, cn=12.0, cp=100.0, uptake_per_day=0.0, half_sat_c=1.0,
         cue=0.5, moisture_opt=0.55, death_per_day=0.006, crowding_c=120.0,
+        dispersal_per_day=0.08,
     )  # fmt: skip
     # Fungal enzymes mine N and P straight out of soil organic matter, which roots can't.
     mine_n_per_day: float = Field(0.004, ge=0.0)  # g N per g fungal C at saturation
