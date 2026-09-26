@@ -1,22 +1,24 @@
-"""Mass-balance ledger.
+"""Mass-balance ledger for every conserved substance.
 
-Every carbon and water flow is booked here by name. The budget check is:
+Each substance's land budget must close every tick:
 
-    carbon: total now == total at t0            (closed system: atmosphere included)
-    land C: plant + soil == t0 + gpp - autotrophic_resp - heterotrophic_resp
-            (catches small leaks the huge atmosphere pool would hide)
-    water:  total now == total at t0 + in - out  (open system: rain in; ET, drainage out)
+    total now == total at t0 + booked inflows - booked outflows
 
-Any mismatch beyond float rounding raises MassBalanceError.
+    c           in: gpp, fixation-free; out: every respiration flux (to atmosphere)
+    n           in: deposition, fixation;  out: leaching, denitrification
+    p           in: weathering;            out: leaching
+    water       in: rain;                  out: evapotranspiration, drainage
+    contaminant in: spills;                out: degradation, leaching
+
+Carbon is also checked as a closed system with the atmosphere included, so a
+flux booked to the land but not debited from the atmosphere is caught too.
+Internal flows (litterfall, herbivory, trade...) are booked for reporting only.
 """
 
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-CARBON_FLOWS = ("gpp", "autotrophic_resp", "litterfall", "disturbance", "heterotrophic_resp")
-WATER_IN = ("rain",)
-WATER_OUT = ("evapotranspiration", "drainage")
-
+SUBSTANCES = ("c", "n", "p", "water", "contaminant")
 RTOL = 1e-10
 
 
@@ -24,36 +26,55 @@ class MassBalanceError(AssertionError):
     pass
 
 
+def _key(substance: str, flow: str) -> str:
+    return f"{substance}:{flow}"
+
+
 @dataclass
 class Ledger:
-    carbon_t0: float
-    land_c_t0: float
-    water_t0: float
-    totals: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    t0: dict[str, float]  # land total per substance at t0
+    atmosphere_c0: float
+    inflows: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    outflows: dict[str, float] = field(default_factory=lambda: defaultdict(float))
+    internal: dict[str, float] = field(default_factory=lambda: defaultdict(float))
 
-    def book(self, flow: str, amount: float) -> None:
-        if amount < 0:
-            raise MassBalanceError(f"negative flow booked: {flow}={amount}")
-        self.totals[flow] += amount
+    def _checked(self, substance: str, flow: str, amount: float) -> str:
+        if substance not in SUBSTANCES:
+            raise KeyError(substance)
+        if not amount >= 0:  # also rejects NaN
+            raise MassBalanceError(f"bad flow booked: {substance}:{flow}={amount}")
+        return _key(substance, flow)
 
-    def expected_water(self) -> float:
-        inflow = sum(self.totals[k] for k in WATER_IN)
-        outflow = sum(self.totals[k] for k in WATER_OUT)
-        return self.water_t0 + inflow - outflow
+    def inflow(self, substance: str, flow: str, amount: float) -> None:
+        self.inflows[self._checked(substance, flow, amount)] += amount
 
-    def expected_land_c(self) -> float:
-        t = self.totals
-        return self.land_c_t0 + t["gpp"] - t["autotrophic_resp"] - t["heterotrophic_resp"]
+    def outflow(self, substance: str, flow: str, amount: float) -> None:
+        self.outflows[self._checked(substance, flow, amount)] += amount
 
-    def check(self, carbon_now: float, land_c_now: float, water_now: float, tick: int) -> None:
-        c_err = carbon_now - self.carbon_t0
-        if abs(c_err) > RTOL * self.carbon_t0:
-            raise MassBalanceError(f"tick {tick}: unexplained carbon {c_err:+.6g} g")
-        land_expected = self.expected_land_c()
-        land_err = land_c_now - land_expected
-        if abs(land_err) > RTOL * max(self.land_c_t0, land_expected, 1.0):
-            raise MassBalanceError(f"tick {tick}: unexplained carbon {land_err:+.6g} g (land)")
-        w_expected = self.expected_water()
-        w_err = water_now - w_expected
-        if abs(w_err) > RTOL * max(self.water_t0, w_expected, 1.0):
-            raise MassBalanceError(f"tick {tick}: unexplained water {w_err:+.6g} mm")
+    def move(self, substance: str, flow: str, amount: float) -> None:
+        self.internal[self._checked(substance, flow, amount)] += amount
+
+    def flows(self, substance: str) -> dict[str, float]:
+        """All booked flows for one substance, inflows positive and outflows negative."""
+        out = {}
+        for k, v in self.inflows.items():
+            if k.startswith(substance + ":"):
+                out[k.split(":", 1)[1]] = v
+        for k, v in self.outflows.items():
+            if k.startswith(substance + ":"):
+                out[k.split(":", 1)[1]] = -v
+        return out
+
+    def expected(self, substance: str) -> float:
+        return self.t0[substance] + sum(self.flows(substance).values())
+
+    def check(self, totals: dict[str, float], atmosphere_c: float, tick: int) -> None:
+        for s in SUBSTANCES:
+            want, got = self.expected(s), totals[s]
+            if abs(got - want) > RTOL * max(abs(self.t0[s]), abs(want), 1.0):
+                raise MassBalanceError(f"tick {tick}: unexplained {s} {got - want:+.6g}")
+        closed = self.atmosphere_c0 + self.t0["c"]
+        if abs(atmosphere_c + totals["c"] - closed) > RTOL * closed:
+            raise MassBalanceError(
+                f"tick {tick}: unexplained c (closed) {atmosphere_c + totals['c'] - closed:+.6g}"
+            )
