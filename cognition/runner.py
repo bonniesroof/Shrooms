@@ -49,6 +49,13 @@ class RunArtifacts:
     mycelium: MyceliumAgent | None
     narrator: Narrator | None
     paths: dict[str, Path] = field(default_factory=dict)
+    conn: sqlite3.Connection | None = None
+
+    def close(self) -> None:
+        """Close the checkpoint database. Until then, agents' graph state stays inspectable."""
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
 
 
 def _next(tick: int, every: int) -> int:
@@ -120,7 +127,6 @@ def run_with_agents(
             if nar and (t % cfg.narrator_every == 0 or t == ticks):
                 nar.narrate(sim)
     checkpoints[sim.state.tick] = sim.state_hash()
-    conn.close()
 
     record = ReplayRecord(
         sim_version=SIM_VERSION,
@@ -137,4 +143,4 @@ def run_with_agents(
         len(sim.accepted),
         len(sim.rejected),
     )
-    return RunArtifacts(sim, record, myc, nar, paths)
+    return RunArtifacts(sim, record, myc, nar, paths, conn)

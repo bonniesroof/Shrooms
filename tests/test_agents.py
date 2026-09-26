@@ -77,6 +77,14 @@ def test_sqlite_checkpointer_holds_both_agent_threads(agent_run):
     assert n[0] >= 5 * len(agent_run.mycelium.traces)  # one per node per decision, at least
 
 
+def test_agent_graph_state_is_inspectable_after_the_run(agent_run):
+    # Regression: the runner used to close the checkpoint DB, breaking get_state().
+    state = agent_run.mycelium.graph.get_state(agent_run.mycelium.config)
+    assert state.values["tick"] == agent_run.mycelium.traces[-1]["tick"]
+    history = list(agent_run.mycelium.graph.get_state_history(agent_run.mycelium.config))
+    assert len(history) >= 5
+
+
 class FakeModel:
     """Proposes an invalid shuttle first, then a valid bias change after feedback."""
 

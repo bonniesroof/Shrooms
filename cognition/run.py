@@ -64,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     start = time.perf_counter()
     art = run_with_agents(args.seed, args.ticks, router, args.out, stem, config=cfg)
     elapsed = time.perf_counter() - start
+    art.close()
     sim = art.sim
 
     agent_intents = [i for i in sim.accepted if i.agent == "mycelium"]
