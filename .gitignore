@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Sim outputs
+data/*
+!data/.gitkeep
+runs/
+
+# Node
+node_modules/
+client/dist/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
