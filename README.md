@@ -10,7 +10,9 @@ Shrooms is a **learning sandbox first**. Each part of it teaches one of three sk
 
 ## Status
 
-**Phase 2 (first agent brain) complete.** A mycelial-network keystone agent (LangGraph: observe → deliberate → propose → validate → commit) acts weekly through typed intents that a rule-based validator checks. A Narrator writes a fact-checked field journal. Both run on a local model via Ollama or vLLM, or on a deterministic scripted stand-in, with SQLite checkpoints. Replays reproduce agent runs without calling a model. Next up is Phase 3 (game feel). See [ROADMAP.md](ROADMAP.md).
+**Phase 3 (game feel) built; Gate B half-verified.** A FastAPI/WebSocket server streams the live sim to a PixiJS client with a surface view and an underground view (the glowing hyphal network, with the keystone agent's nutrient shuttles as travelling pulses). There's a HUD with time controls, remediation tools, an inspector showing the agent's observation → intent → rationale, a whisper box to the agent, and a research/game mode switch. A Scenario Director paces game mode. The first scenario, **brownfield remediation**, is playable end to end: in CI, a scripted gardener wins it and an idle one loses.
+
+The 60 fps half of Gate B is **not yet verified on a real GPU**. Measured so far in headless Chromium on SwiftShader (a CPU software rasterizer), the dense benchmark reaches 35–43 fps at 800×450 with 4,700–9,700 entities; per-frame JS work is about 0.1 ms. At 1600×900 software fill rate drops it to single digits. Open `/?bench` on a machine with a GPU to check. Phase 2's agents have only run on the scripted stand-in so far. See [ROADMAP.md](ROADMAP.md).
 
 ## Core design rules
 
@@ -48,8 +50,9 @@ sim/                deterministic core
   transport.py      conservative lateral moves and shared-supply helpers
   env.py            per-tick context and environmental response curves
   ledger.py         mass-balance ledger (C, N, P, water, contaminant)
-  intents.py        typed intents: `disturb`, `spill`, and the network's `shuttle_nutrients`,
-                    `relocate_hyphae`, `set_trade_bias`
+  intents.py        typed intents: `disturb`, `spill`; the network's `shuttle_nutrients`,
+                    `relocate_hyphae`, `set_trade_bias`; player tools `inoculate`, `amend`,
+                    `seed`, `irrigate`, `excavate`; director events `pest_outbreak`, `downpour`
   replay.py         replay records and verification
   viewer.py         thin matplotlib debug viewer
   run.py            CLI
@@ -65,19 +68,28 @@ cognition/          LLM agents (LangGraph)
   scripted.py       deterministic stand-in policies
   runner.py         runs sim + agents on slow clocks, SQLite checkpoints
   run.py            CLI
-client/             pnpm + Vite + PixiJS stub (real views in Phase 3)
+server/             game server
+  app.py            FastAPI + WebSocket: frames out, commands in; serves the built client
+  session.py        live session: sim, agents off the sim thread, director, budget, tools
+  scenarios.py      brownfield remediation: setup intents, objectives, clock
+  director.py       Scenario Director (game mode only): pacing through validated events
+  players.py        scripted players used to balance and test scenarios
+client/             PixiJS game (TypeScript, Vite)
+  src/world.ts      surface and underground views, hyphal network, entities
+  src/hud.ts        time controls, tools, objectives, inspector, whisper, feed
+  src/net.ts        WebSocket connection and frame decoding
 notebooks/          one learning notebook per phase
 tests/              roadmap gates, component and per-guild ecology tests
 data/               trajectory store (gitignored)
 ```
 
-Planned: `server/` (FastAPI + WebSocket, Phase 3), `worldmodel/` (graphs, GNN, JEPA, Phases 4–6).
+Planned: `worldmodel/` (graphs, GNN, JEPA, Phases 4–6).
 
 ## Stack
 
-In use: Python 3.12 (NumPy, Pydantic, matplotlib, LangGraph + SQLite checkpointer, httpx) · Ollama / vLLM · TypeScript (Vite, PixiJS) · uv, pnpm, pre-commit, GitHub Actions.
+In use: Python 3.12 (NumPy, Pydantic, matplotlib, LangGraph + SQLite checkpointer, httpx, FastAPI, uvicorn) · Ollama / vLLM · TypeScript (Vite, PixiJS v8) · uv, pnpm, pre-commit, GitHub Actions.
 
-Planned: Numba, FastAPI, PyTorch Geometric, Parquet + DuckDB, Docker Compose.
+Planned: Numba, PyTorch Geometric, Parquet + DuckDB, Docker Compose.
 
 ## Getting started
 
@@ -114,7 +126,21 @@ uv run python -m cognition.run --model openai:<model> --base-url http://localhos
 
 Each run writes a replay record, the field journal, a per-decision trace (JSONL), LangGraph checkpoints (SQLite) and a full log to `runs/`. If the model server is unreachable, the run logs a warning and continues on the scripted policy.
 
-Client stub: `cd client && pnpm install && pnpm dev`.
+### Play
+
+```bash
+cd client && pnpm install && pnpm build && cd ..
+uv run python -m server                     # brownfield, game mode, scripted agents
+# open http://localhost:8000
+uv run python -m server --model ollama:qwen2.5:7b-instruct   # a real model for the agents
+uv run python -m server --mode research --seed 7             # no director; tools are free
+```
+
+For client development, run `pnpm dev` in `client/` alongside the server and open http://localhost:5173; it proxies `/ws` and `/api` to :8000.
+
+**How to play brownfield.** An old industrial pad (the gold square) has been stripped to subsoil and soaked in hydrocarbons. Within three years, get the contaminant below 25%, plant cover above 60%, and 10 of the 16 site patches onto the fungal network. Pick a tool on the left and click the map. Bacteria and compost drive cleanup, but fungi only establish on clean ground, so the objectives have to come in order. Space pauses and plays, Tab flips between surface and underground, Esc drops the tool. Watch the inspector to see what the mycelial network decides each week, and whisper to it, for example "help r3c4". It may refuse, and it will say why. A budget grant arrives monthly; the director answers if you race ahead or fall behind.
+
+`/?bench` renders a dense synthetic world without a server and reports fps (`&view=underground`, `&aa=0`, `&regen=0` vary it). `/api/record` downloads the session's replay record.
 
 ## Docs
 
