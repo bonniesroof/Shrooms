@@ -19,5 +19,24 @@ jobs:
         run: uv sync --locked
       - name: Lint
         run: uv run ruff check . && uv run ruff format --check .
-      - name: Tests (1-year run, replay determinism, mass balance)
+      - name: Tests (gates, replay determinism, mass balance, scenario playthrough)
         run: uv run pytest -v
+
+  client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm exec tsc -p .
+      - name: Build
+        run: pnpm build
