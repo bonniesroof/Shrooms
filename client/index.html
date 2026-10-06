@@ -4,8 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Shrooms</title>
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
-  <body style="margin: 0; background: #111">
+  <body>
+    <header>
+      <b class="logo">🍄 Shrooms</b>
+      <span id="date">–</span>
+      <span id="speeds"></span>
+      <button id="step" title="Advance one day">+1 day</button>
+      <button id="view" data-v="surface" title="Tab">⬇ Underground</button>
+      <button id="mode" data-m="game">🎮 Game</button>
+      <button id="newgame">New game</button>
+      <span id="thinking"></span>
+      <span id="perf"></span>
+    </header>
+    <aside id="left">
+      <section id="objectives"></section>
+      <section><h3>Tools</h3><div id="budget"></div><div id="tools"></div></section>
+      <section id="stats"></section>
+    </aside>
+    <main id="map"><div id="hover"></div><div id="banner"></div><div id="toast"></div></main>
+    <aside id="right">
+      <section><h3>Mycelial network · inspector</h3><div id="inspector">Waiting for the network's first decision (weekly)…</div></section>
+      <section id="whisper">
+        <input id="whisper-text" placeholder="Whisper to the network… e.g. help r3c4" maxlength="300" />
+        <button id="whisper-send">Whisper</button>
+      </section>
+      <section id="journal"></section>
+      <section><h3>Feed</h3><div id="feed"></div></section>
+    </aside>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
