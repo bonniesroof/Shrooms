@@ -251,3 +251,71 @@ def test_temporal_loss_decreases_and_is_deterministic(tiny_worlds):
     assert last < 0.7 * first, [c["jepa"] for c in curves[0]]
     assert curves[0][-1]["loss"] == curves[1][-1]["loss"]
     assert curves[0][-1]["pred_rank"] > 2
+
+
+# --- action-conditioned JEPA: forcing, counterfactuals --------------------------------------
+
+from sim.intents import Disturb as _Disturb  # noqa: E402
+from sim.intents import Spill as _Spill  # noqa: E402
+from worldmodel.forcing import FORCING_KINDS, cumulative_forcing, footprint, window  # noqa: E402
+
+
+def test_spill_footprint_conserves_mass_and_lands_in_the_right_patch():
+    f = footprint(_Spill(tick=0, x=12.0, y=20.0, radius=2.0, mass_g=500.0))
+    col = f[:, FORCING_KINDS.index("spill")]
+    assert col.sum() == pytest.approx(500.0)
+    assert int(col.argmax()) == 2 * 8 + 1  # row 20 // 8 = 2, column 12 // 8 = 1: r2c1
+    d = footprint(_Disturb(tick=0, x0=0, y0=0, x1=8, y1=4, fraction=0.5))
+    assert d[0, FORCING_KINDS.index("disturb")] == pytest.approx(0.25)  # half the patch, at 50%
+
+
+def test_forcing_windows_hold_exactly_the_intents_between_snapshots():
+    ticks = np.array([24, 48, 72, 96])
+    spill = _Spill(tick=50, x=4.0, y=4.0, radius=1.0, mass_g=100.0)
+    cum = cumulative_forcing([spill], ticks)
+    s = FORCING_KINDS.index("spill")
+    assert window(cum, 0, 1)[:, s].sum() == 0  # (24, 48]: before the spill
+    assert window(cum, 1, 1)[:, s].sum() == pytest.approx(100.0)  # (48, 72]
+    assert window(cum, 0, 3)[:, s].sum() == pytest.approx(100.0)
+    assert window(cum, 2, 1)[:, s].sum() == 0
+
+
+def test_forcing_mode_records_intents_and_keeps_phase4_runs_unchanged():
+    a = generate_run(907, days=8, mode="forcing")
+    assert "intents" in a and a["w"].shape == (8, 3)
+    b = generate_run(907, days=8)
+    assert "intents" not in b and "w" not in b
+
+
+@needs_torch
+def test_action_predictor_starts_as_its_unconditioned_twin(tiny_worlds):
+    w, _ = tiny_worlds
+    base = make_temporal()
+    torch.manual_seed(0)
+    act = TemporalJEPA(n_in=14, n_glob=7, hidden=16, layers=2, pred_layers=1, n_forcing=7,
+                       n_weather=3)  # fmt: skip
+    missing, _ = act.load_state_dict(base.state_dict(), strict=False)
+    assert all(k.startswith(("predictor.act.", "predictor.weather.")) for k in missing)
+    rows = w.t[:3]
+    now, past, k = w.at(rows), w.at(rows, -7), torch.zeros(3, dtype=torch.long)
+    forcing = {"forcing": torch.rand(3, 64, 7), "weather": torch.rand(3, 3)}
+    _, p0 = base.predict(now, past, k)
+    _, p1 = act.predict(now, past, k, forcing)
+    assert torch.allclose(p0, p1)  # zero-initialized forcing paths
+    with torch.no_grad():
+        act.predictor.act[2].weight.normal_()
+    _, p2 = act.predict(now, past, k, forcing)
+    _, p3 = act.predict(now, past, k, {**forcing, "forcing": torch.zeros(3, 64, 7)})
+    assert not torch.allclose(p2, p3)  # once trained, the forcing changes the prediction
+
+
+def test_counterfactual_branches_share_weather_and_differ_by_the_spill():
+    from worldmodel.counterfactual import world_pairs
+    from worldmodel.targets import state_heads
+
+    p = world_pairs(908, branch_days=(10,), horizon=7)  # snapshots at 1 and 7 days
+    assert p["x_base"].shape == p["x_spill"].shape == (1, 2, 64, 14)
+    d = state_heads(p["x_spill"])["contamination"] - state_heads(p["x_base"])["contamination"]
+    assert d.max() > 0.01 and d.min() > -1e-9  # the spill only adds contaminant
+    again = world_pairs(908, branch_days=(10,), horizon=7)
+    assert np.array_equal(p["x_spill"], again["x_spill"])  # deterministic
