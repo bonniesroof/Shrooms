@@ -258,7 +258,10 @@
    },
    "mean_skill@1d": 0.2202878066135721,
    "mean_skill@7d": 0.20927197853402416,
-   "mean_skill@30d": 0.23415953777993376
+   "mean_skill@30d": 0.23415953777993376,
+   "mean_skill_ex_mortality@1d": 0.15060518814671245,
+   "mean_skill_ex_mortality@7d": 0.1377027820195646,
+   "mean_skill_ex_mortality@30d": 0.17298382861878006
   },
   "raw": {
    "biomass@1d": {
@@ -338,7 +341,10 @@
    },
    "mean_skill@1d": 0.2762657460711617,
    "mean_skill@7d": 0.2702257512327126,
-   "mean_skill@30d": 0.2963921452404765
+   "mean_skill@30d": 0.2963921452404765,
+   "mean_skill_ex_mortality@1d": 0.22057761246869945,
+   "mean_skill_ex_mortality@7d": 0.2138949978929252,
+   "mean_skill_ex_mortality@30d": 0.25077458794446
   },
   "constant": {
    "biomass@1d": {
@@ -418,7 +424,10 @@
    },
    "mean_skill@1d": 0.12827627112088485,
    "mean_skill@7d": 0.10163522338635736,
-   "mean_skill@30d": 0.09771784214345385
+   "mean_skill@30d": 0.09771784214345385,
+   "mean_skill_ex_mortality@1d": 0.035590768780853405,
+   "mean_skill_ex_mortality@7d": 0.0031568380849811284,
+   "mean_skill_ex_mortality@30d": 0.002431709073185684
   },
   "raw+temporal": {
    "biomass@1d": {
@@ -498,7 +507,10 @@
    },
    "mean_skill@1d": 0.28554631113231926,
    "mean_skill@7d": 0.2815559534022351,
-   "mean_skill@30d": 0.3148679006992323
+   "mean_skill@30d": 0.3148679006992323,
+   "mean_skill_ex_mortality@1d": 0.2321783187951464,
+   "mean_skill_ex_mortality@7d": 0.22805775060482827,
+   "mean_skill_ex_mortality@30d": 0.2738692822679009
   },
   "static": {
    "biomass@1d": {
@@ -578,7 +590,10 @@
    },
    "mean_skill@1d": 0.20972825574539455,
    "mean_skill@7d": 0.200885923916771,
-   "mean_skill@30d": 0.23583310515573785
+   "mean_skill@30d": 0.23583310515573785,
+   "mean_skill_ex_mortality@1d": 0.13740574956149043,
+   "mean_skill_ex_mortality@7d": 0.1272202137479981,
+   "mean_skill_ex_mortality@30d": 0.1750757878385352
   }
  },
  "collapse": {
@@ -601,5 +616,14 @@
    "dims": 64
   }
  },
- "gnn_test_from": "worldmodel/forecaster_metrics.json"
+ "gnn_test_from": "worldmodel/forecaster_metrics.json",
+ "gnn_test_means": {
+  "mean_skill@1d": 0.2566046417722537,
+  "mean_skill@7d": 0.3545804100386955,
+  "mean_skill@30d": 0.43310809920413007,
+  "mean_skill_ex_mortality@1d": 0.22286343472543085,
+  "mean_skill_ex_mortality@7d": 0.32388543404682435,
+  "mean_skill_ex_mortality@30d": 0.4227315181491367
+ },
+ "weights": "fp16 checkpoint; metrics from the full-precision model"
 }

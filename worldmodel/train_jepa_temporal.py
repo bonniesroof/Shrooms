@@ -1,7 +1,7 @@
 """Train the temporal JEPA (latents at t -> latents at t + k) and score it with forecast probes.
 
     uv run python -m worldmodel.train_jepa              # static JEPA first (its encoders seed this)
-    uv run python -m worldmodel.train_jepa_temporal     # ~8 min on 2 cores
+    uv run python -m worldmodel.train_jepa_temporal     # ~5 min on 2 cores
 
 Self-supervised: the context encoder sees the whole snapshot at t (and t - 7 d,
 for the trend, like the GNN's inputs); the predictor, told the horizon k, predicts
@@ -9,8 +9,9 @@ what the EMA target encoder makes of the snapshot at t + k, for k in
 targets.HORIZONS_DAYS (1, 7, 30 days). No forecast targets are used in training.
 
 Evaluation is a probe, not Gate C: freeze everything, take the predicted latents
-for each horizon, fit one ridge probe per head and horizon onto the Phase 4
-forecast targets (train worlds 0-19; ridge strength by the reported metric on
+for each horizon, fit one linear probe per head and horizon onto the Phase 4
+forecast targets (least absolute deviations for the MAE heads, ridge least
+squares for links; train worlds 0-19, ridge strength by the reported metric on
 val worlds 20-23), and score on test worlds 24-27 with targets.scores (MAE, Brier
 for links), the metric forecaster_metrics.json reports. Compared with:
     persistence      the Phase 4 baselines
@@ -21,6 +22,13 @@ for links), the metric forecaster_metrics.json reports. Compared with:
                      mostly-zero die-back target it is "no die-back", which MAE rewards)
     static           the same probes on the static JEPA's latents at t
     temporal         the same probes on the temporal JEPA's predicted latents at t + k
+
+Die-back (mortality) is mostly zero, so under MAE even the constant probe ("no
+die-back") gets ~0.5 skill on it, and so does every probe. The metrics therefore
+also carry mean_skill_ex_mortality@<h>d, the mean over the other four heads.
+
+Metrics are computed with the full-precision model at the end of training; the
+checkpoint stores weights in fp16 to stay small.
 
 Writes worldmodel/jepa_temporal.pt and worldmodel/jepa_temporal_metrics.json.
 """
@@ -176,12 +184,22 @@ def evaluate(model: TemporalJEPA, static: StaticJEPA | None, worlds: dict[str, W
         reps["static"] = {s: static_latents(static, w, w.t) for s, w in worlds.items()}
     out = {"test_samples": int(len(samples["test"]["day"])), "probes": {}}
     for name, feats in reps.items():
-        out["probes"][name] = scores(forecast_probes(feats, samples), samples["test"])
+        out["probes"][name] = with_ex_mortality(scores(forecast_probes(feats, samples),
+                                                       samples["test"]))  # fmt: skip
     gnn = json.loads(GNN_METRICS.read_text())["test"]
-    out["gnn"] = gnn
+    out["gnn"] = with_ex_mortality(gnn)
     out["collapse"] = {f"pred@{hd}d": collapse_stats(reps["temporal"]["test"][:, k])
                        for k, hd in enumerate(HORIZONS_DAYS)}  # fmt: skip
     return out
+
+
+def with_ex_mortality(sc: dict) -> dict:
+    """Add mean_skill_ex_mortality@<h>d: the mean skill over every head but die-back."""
+    heads = [h for h in HEADS if h != "mortality"]
+    for h in HORIZONS_DAYS:
+        sc[f"mean_skill_ex_mortality@{h}d"] = float(np.mean([sc[f"{n}@{h}d"]["skill"]
+                                                             for n in heads]))  # fmt: skip
+    return sc
 
 
 def summary_table(ev: dict) -> str:
@@ -190,12 +208,12 @@ def summary_table(ev: dict) -> str:
         m for m in ("temporal", "static", "raw", "raw+temporal", "constant") if m in ev["probes"]
     ]
     lines = [f"{'skill vs persistence':<22}" + "".join(f"{m:>13}" for m in (*models, "gnn"))]
-    for name in (*HEADS, "mean_skill"):
+    for name in (*HEADS, "mean_skill", "mean_skill_ex_mortality"):
         for h in HORIZONS_DAYS:
             key = f"{name}@{h}d"
             vals = [ev["probes"][m][key] for m in models] + [ev["gnn"][key]]
             vals = [v if isinstance(v, float) else v["skill"] for v in vals]
-            lines.append(f"  {key:<20}" + "".join(f"{v:13.3f}" for v in vals))
+            lines.append(f"  {key[:20]:<20}" + "".join(f"{v:13.3f}" for v in vals))
     return "\n".join(lines)
 
 
@@ -252,6 +270,7 @@ def main() -> None:
                                for k, v in model.state_dict().items() if k != "mask"}},
                args.out)  # fmt: skip
     metrics_path = args.out.with_name(args.out.stem + "_metrics.json")
+    gnn_means = {k: v for k, v in ev["gnn"].items() if k.startswith("mean_skill")}
     ev_out = {k: v for k, v in ev.items() if k != "gnn"}
     metrics_path.write_text(json.dumps({
         "splits": {k: list(v) for k, v in SPLITS.items()},
@@ -261,7 +280,8 @@ def main() -> None:
         "init_from_static": init,
         "train_seconds": round(train_s, 1), "total_seconds": round(time.time() - t0, 1),
         "curve": curve, **ev_out,
-        "gnn_test_from": "worldmodel/forecaster_metrics.json",
+        "gnn_test_from": "worldmodel/forecaster_metrics.json", "gnn_test_means": gnn_means,
+        "weights": "fp16 checkpoint; metrics from the full-precision model",
     }, indent=1))  # fmt: skip
     print(f"wrote {args.out} and {metrics_path} ({time.time() - t0:.0f}s)")
 
