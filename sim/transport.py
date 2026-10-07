@@ -6,6 +6,7 @@ leaves a cell arrives in a neighbour, so totals change only by float rounding.
 
 from functools import lru_cache
 
+import numba
 import numpy as np
 
 # Direction index -> (row offset, col offset)
@@ -43,13 +44,8 @@ def downslope_drops(elevation: np.ndarray) -> np.ndarray:
     return np.maximum(elevation - neighbours, 0.0) * edge_mask(elevation.shape)
 
 
-def route(amount: np.ndarray, fractions: np.ndarray) -> np.ndarray:
-    """Move `amount * fractions[d]` from each cell to its neighbour in direction d.
-
-    `amount` is (..., H, W), e.g. one field or a stack of layers or elements.
-    `fractions` is (..., 4, H, W), broadcast against it, with per-cell sums <= 1.
-    Returns the new field(s).
-    """
+def route_reference(amount: np.ndarray, fractions: np.ndarray) -> np.ndarray:
+    """Pure-numpy route(). Kept as the specification the compiled kernel must match bit for bit."""
     sent = amount[..., None, :, :] * fractions  # (..., 4, H, W)
     out = amount - sent.sum(axis=-3)
     out[..., :-1, :] += sent[..., 0, 1:, :]  # northward: row r -> r-1
@@ -57,6 +53,51 @@ def route(amount: np.ndarray, fractions: np.ndarray) -> np.ndarray:
     out[..., :, :-1] += sent[..., 2, :, 1:]  # westward
     out[..., :, 1:] += sent[..., 3, :, :-1]  # eastward
     return out
+
+
+@numba.njit(cache=True)
+def _route_kernel(a, f, out):  # a (K,H,W), f (K,4,H,W) or (1,4,H,W) shared, out (K,H,W)
+    k_, h, w = a.shape
+    shared = f.shape[0] == 1
+    for kk in range(k_):
+        k = 0 if shared else kk
+        for r in range(h):
+            for c in range(w):
+                x = a[kk, r, c]
+                # Same operations in the same order as route_reference, so the
+                # result is bit-identical (no fastmath, no reassociation).
+                sent = ((x * f[k, 0, r, c] + x * f[k, 1, r, c]) + x * f[k, 2, r, c]) + x * f[
+                    k, 3, r, c
+                ]
+                v = x - sent
+                if r + 1 < h:
+                    v += a[kk, r + 1, c] * f[k, 0, r + 1, c]
+                if r >= 1:
+                    v += a[kk, r - 1, c] * f[k, 1, r - 1, c]
+                if c + 1 < w:
+                    v += a[kk, r, c + 1] * f[k, 2, r, c + 1]
+                if c >= 1:
+                    v += a[kk, r, c - 1] * f[k, 3, r, c - 1]
+                out[kk, r, c] = v
+
+
+def route(amount: np.ndarray, fractions: np.ndarray) -> np.ndarray:
+    """Move `amount * fractions[d]` from each cell to its neighbour in direction d.
+
+    `amount` is (..., H, W), e.g. one field or a stack of layers or elements.
+    `fractions` is (..., 4, H, W), broadcast against it, with per-cell sums <= 1.
+    Returns the new field(s). Compiled with Numba; see route_reference for the spec.
+    """
+    h, w = amount.shape[-2:]
+    lead = amount.shape[:-2]
+    a = np.ascontiguousarray(amount, dtype=np.float64).reshape(-1, h, w)
+    if fractions.ndim == 3:  # one set of fractions shared by every field: no copy
+        f = fractions.reshape(1, 4, h, w)
+    else:
+        f = np.broadcast_to(fractions, (*lead, 4, h, w)).reshape(-1, 4, h, w)
+    out = np.empty_like(a)
+    _route_kernel(a, np.ascontiguousarray(f, dtype=np.float64), out)
+    return out.reshape(amount.shape)
 
 
 def fit(available: np.ndarray, *demands: np.ndarray) -> list[np.ndarray]:
