@@ -146,6 +146,7 @@ For client development, run `pnpm dev` in `client/` alongside the server and ope
 
 - **Spec:** full design, including agents, environment, orchestration and world model (link TBD)
 - **[ROADMAP.md](ROADMAP.md):** phased development plan
+- **[Architecture](docs/architecture.md):** system diagram of what's built and what's planned, plus phase status
 - **[Phase 0 notebook](notebooks/phase0_foundations.ipynb):** what was built, determinism, the carbon budget, and what broke
 - **[Phase 1 notebook](notebooks/phase1_living_soil.ipynb):** nutrient cycling, the mycorrhizal market experiments, the brownfield signature, and the tuning log
 - **[Phase 2 notebook](notebooks/phase2_agent_brain.ipynb):** a decision end to end, validator feedback, replay without a model, whether the agent helps, and what broke
