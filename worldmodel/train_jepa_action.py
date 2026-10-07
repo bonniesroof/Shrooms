@@ -44,6 +44,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from worldmodel.collapse import CollapseMonitor
 from worldmodel.counterfactual import DEFAULT_PATH as CF_PATH
 from worldmodel.counterfactual import load as load_pairs
 from worldmodel.dataset import OUT_FORCING
@@ -417,7 +418,9 @@ def main() -> None:
     missing, unexpected = model.load_state_dict(temporal.state_dict(), strict=False)
     assert not unexpected and all(k.startswith(("predictor.act.", "predictor.weather."))
                                   for k in missing), (missing, unexpected)  # fmt: skip
+    monitor = CollapseMonitor()
     curve = train(model, train_worlds, epochs=args.epochs, batch=args.batch, lr=args.lr,
+                  monitor=monitor,
                   var_weight=args.var_weight, seed=args.seed,
                   log=lambda s: print(s, flush=True))  # fmt: skip
     train_s = time.time() - t0
@@ -445,7 +448,8 @@ def main() -> None:
         "init_from": str(args.init), "forcing_meta": fmeta,
         "train_seconds": round(train_s, 1), "total_seconds": round(time.time() - t0, 1),
         "weights": "fp16 checkpoint; metrics from the full-precision model",
-        "curve": curve, "forecast": ev, "counterfactual": cf,
+        "curve": curve, "collapse_monitor": monitor.report(), "forecast": ev,
+        "counterfactual": cf,
     }, indent=1))  # fmt: skip
     print(f"wrote {args.out} and {metrics_path} ({time.time() - t0:.0f}s)")
 

@@ -91,6 +91,7 @@ class StaticJEPA(nn.Module):
         for p in self.target.parameters():
             p.requires_grad_(False)
         self.predictor = Predictor(hidden, pred_layers, n)
+        self.stop_grad = True  # False only to demonstrate collapse (tests)
 
     def adjacency(self, elev, on, hidden=None):
         if hidden is not None:
@@ -110,9 +111,12 @@ class StaticJEPA(nn.Module):
         return ctx, self.predictor(ctx, gl, adj, hidden)
 
     def loss(self, nodes, glob, on, elev, hidden, var_weight: float = 1.0) -> dict:
-        with torch.no_grad():
-            tgt = self.target(nodes, glob, self.adjacency(elev, on))
-            tgt = fn.layer_norm(tgt, tgt.shape[-1:])
+        if self.stop_grad:
+            with torch.no_grad():
+                tgt = self.target(nodes, glob, self.adjacency(elev, on))
+        else:  # no EMA target, no stop-grad: the target is the context encoder itself
+            tgt = self.context(nodes, glob, self.adjacency(elev, on))
+        tgt = fn.layer_norm(tgt, tgt.shape[-1:])
         ctx, pred = self.predict(nodes, glob, on, elev, hidden)
         jepa = fn.smooth_l1_loss(pred[hidden], tgt[hidden])
         var = variance_hinge(ctx[~hidden])

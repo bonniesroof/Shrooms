@@ -41,6 +41,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from worldmodel.collapse import CollapseMonitor, collapse_stats
 from worldmodel.dataset import OUT, load
 from worldmodel.forcing import (
     cumulative_forcing,
@@ -51,7 +52,7 @@ from worldmodel.forcing import (
 )
 from worldmodel.graph import F, on_network
 from worldmodel.jepa import StaticJEPA, TemporalJEPA, momentum_at
-from worldmodel.probes import collapse_stats, forecast_probes
+from worldmodel.probes import forecast_probes
 from worldmodel.targets import HORIZONS_DAYS, TREND_DAYS, build_samples, scores, transform
 from worldmodel.train import SPLITS
 from worldmodel.train_jepa import DEFAULT_PATH as STATIC_PATH
@@ -114,7 +115,14 @@ class Worlds:
 
 
 def train(model: TemporalJEPA, worlds: Worlds, *, epochs: int, batch: int, lr: float,
-          var_weight: float, seed: int, log=print) -> list[dict]:  # fmt: skip
+          var_weight: float, seed: int, log=print,
+          monitor: CollapseMonitor | None = None) -> list[dict]:  # fmt: skip
+    """Train any model with TemporalJEPA's interface (loss, predict, ema_update).
+
+    `monitor` records the predicted 7-day latents and the context latents at t
+    every epoch.
+    """
+    monitor = monitor if monitor is not None else CollapseMonitor()
     gen = torch.Generator().manual_seed(seed)
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=lr, weight_decay=0.04)
@@ -146,6 +154,9 @@ def train(model: TemporalJEPA, worlds: Worlds, *, epochs: int, batch: int, lr: f
                 sums[k] += float(out[k].detach()) * len(rows)
             per_h += out["per_horizon"].detach().numpy() * len(rows)
         z = predicted(model, worlds, probe_rows)
+        with torch.no_grad():
+            ctx = model._encode(model.context, worlds.at(probe_rows)).numpy()
+        monitor.record(epoch, predicted_7d=z[:, 1], context=ctx)
         stats = collapse_stats(z[:, 1])  # the 7-day predictions
         row = {"epoch": epoch, **{k: v / n for k, v in sums.items()},
                **{f"jepa@{h}d": float(v / n) for h, v in zip(HORIZONS_DAYS, per_h, strict=True)},
@@ -154,8 +165,7 @@ def train(model: TemporalJEPA, worlds: Worlds, *, epochs: int, batch: int, lr: f
         curve.append(row)
         log(f"epoch {epoch:2d} loss {row['loss']:.4f} | "
             + " ".join(f"{h}d {row[f'jepa@{h}d']:.4f}" for h in HORIZONS_DAYS)
-            + f" | pred std {stats['std']:.3f} eff. rank {stats['effective_rank']:.1f}"
-            f"/{stats['dims']}  ({row['seconds']:.0f}s)")  # fmt: skip
+            + f" | {monitor.line()}  ({row['seconds']:.0f}s)")  # fmt: skip
     return curve
 
 
@@ -289,7 +299,9 @@ def main() -> None:
                          n_glob=train_worlds.flat["glob"].shape[-1])  # fmt: skip
     if init:
         model.init_encoders(torch.load(args.init, weights_only=True)["state_dict"])
+    monitor = CollapseMonitor()
     curve = train(model, train_worlds, epochs=args.epochs, batch=args.batch, lr=args.lr,
+                  monitor=monitor,
                   var_weight=args.var_weight, seed=args.seed,
                   log=lambda s: print(s, flush=True))  # fmt: skip
     train_s = time.time() - t0
@@ -316,7 +328,7 @@ def main() -> None:
         "args": {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
         "init_from_static": init,
         "train_seconds": round(train_s, 1), "total_seconds": round(time.time() - t0, 1),
-        "curve": curve, **ev_out,
+        "curve": curve, "collapse_monitor": monitor.report(), **ev_out,
         "gnn_test_from": "worldmodel/forecaster_metrics.json", "gnn_test_means": gnn_means,
         "weights": "fp16 checkpoint; metrics from the full-precision model",
     }, indent=1))  # fmt: skip

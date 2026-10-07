@@ -12,13 +12,12 @@ Probe targets (current state, same definitions as targets.state_heads):
     links          whether an adjacent pair is a fungal link (0/1); probed from the
                    pair's representations summed, the symmetric readout of the link head
 
-Collapse statistics on a (rows, dims) matrix of embeddings:
-    std            mean over dimensions of the per-dimension standard deviation
-    effective rank exp(entropy of the normalized singular values) (RankMe); 1 = collapsed
+Collapse statistics live in collapse.py (re-exported here).
 """
 
 import numpy as np
 
+from worldmodel.collapse import collapse_stats  # noqa: F401  (re-exported)
 from worldmodel.graph import adjacent_pairs, links, on_network
 from worldmodel.targets import state_heads
 
@@ -106,18 +105,6 @@ def run_probes(feats: dict, targets: dict, rows: int = 8, cols: int = 8,
         out[name] = fit_probe(*splits)
     out["mean_test_r2"] = float(np.mean([v["test_r2"] for v in out.values()]))
     return out
-
-
-def collapse_stats(z: np.ndarray) -> dict:
-    """Embedding spread and effective rank of (rows, D) embeddings (any leading shape)."""
-    z = z.reshape(-1, z.shape[-1]).astype(np.float64)
-    zc = z - z.mean(0)
-    s = np.linalg.svd(zc, compute_uv=False)
-    p = s / max(s.sum(), 1e-12)
-    p = p[p > 0]
-    return {"std": float(z.std(0).mean()), "min_std": float(z.std(0).min()),
-            "effective_rank": float(np.exp(-(p * np.log(p)).sum())),
-            "dims": int(z.shape[1])}  # fmt: skip
 
 
 # --- forecast probes: frozen representations -> the Phase 4 forecast heads -------------------
