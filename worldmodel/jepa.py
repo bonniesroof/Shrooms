@@ -153,3 +153,92 @@ def momentum_at(step: int, total: int, start: float = 0.996, end: float = 1.0) -
     """EMA momentum, cosine-ramped from `start` to `end` over training (BYOL / I-JEPA)."""
     frac = min(step / max(total, 1), 1.0)
     return end - (end - start) * (math.cos(math.pi * frac) + 1) / 2
+
+
+# --- temporal JEPA: predict the latents of t + k from t -------------------------------------
+
+
+class TemporalPredictor(nn.Module):
+    """Latents at t and their change since t - 7 d, plus a horizon embedding -> latents at t + k."""
+
+    def __init__(self, hidden: int, layers: int, n_nodes: int, n_horizons: int):
+        super().__init__()
+        self.inp = mlp(2 * hidden, hidden, hidden)
+        self.horizon = nn.Embedding(n_horizons, hidden)
+        self.pos = nn.Parameter(torch.randn(n_nodes, hidden) * 0.02)
+        self.layers = nn.ModuleList(Layer(hidden) for _ in range(layers))
+        self.out = nn.Sequential(nn.LayerNorm(hidden), nn.Linear(hidden, hidden))
+
+    def forward(self, z_now, z_past, glob_latent, adj, k):
+        hk = self.horizon(k)[:, None, :]
+        h = self.inp(torch.cat([z_now, z_now - z_past], dim=-1)) + self.pos + hk
+        gl = glob_latent + hk
+        for layer in self.layers:
+            h = layer(h, adj, gl)
+        return self.out(h)
+
+
+class TemporalJEPA(nn.Module):
+    """Context encoder on the snapshot at t (fully visible) -> predicted target latents at t + k.
+
+        x_t, x_{t-7} ──► context encoder ──► predictor(k) ──► ẑ_{t+k} ┐
+        x_{t+k} ────────► target encoder (EMA, no grad) ──► z_{t+k} ───┘ smooth-L1
+
+    One predictor serves every horizon, told which by a learned embedding.
+    """
+
+    def __init__(self, n_in: int, n_glob: int, hidden: int = 64, layers: int = 3,
+                 pred_layers: int = 2, n_horizons: int = 3, rows: int = 8,
+                 cols: int = 8):  # fmt: skip
+        super().__init__()
+        self.config = {"n_in": n_in, "n_glob": n_glob, "hidden": hidden, "layers": layers,
+                       "pred_layers": pred_layers, "n_horizons": n_horizons, "rows": rows,
+                       "cols": cols}  # fmt: skip
+        n = rows * cols
+        self.register_buffer("mask", grid_mask(rows, cols))
+        self.context = Encoder(n_in, n_glob, hidden, layers, n)
+        self.target = copy.deepcopy(self.context)
+        for p in self.target.parameters():
+            p.requires_grad_(False)
+        self.predictor = TemporalPredictor(hidden, pred_layers, n, n_horizons)
+
+    def init_encoders(self, static_state: dict) -> None:
+        """Start both encoders from a trained StaticJEPA's, each from its namesake."""
+        for name in ("context", "target"):
+            sub = {k[len(name) + 1 :]: v.float() for k, v in static_state.items()
+                   if k.startswith(name + ".")}  # fmt: skip
+            getattr(self, name).load_state_dict(sub)
+
+    def _encode(self, enc, s):
+        return enc(s["nodes"], s["glob"], adjacency(self.mask, s["elev"], s["on"]))
+
+    def predict(self, now: dict, past: dict, k: torch.Tensor):
+        """(B, N, D) context latents at t, and (B, N, D) predicted latents at t + k[b]."""
+        z_now, z_past = self._encode(self.context, now), self._encode(self.context, past)
+        gl = self.context.embed_glob(now["glob"])[:, None, :]
+        adj = adjacency(self.mask, now["elev"], now["on"])
+        return z_now, self.predictor(z_now, z_past, gl, adj, k)
+
+    def loss(self, now: dict, past: dict, futures: list[dict], var_weight: float = 0.1) -> dict:
+        """futures[i] is the snapshot at t + horizon i. All horizons in one stacked batch."""
+        h = len(futures)
+        b = now["nodes"].shape[0]
+        with torch.no_grad():
+            fut = {key: torch.cat([f[key] for f in futures]) for key in futures[0]}
+            tgt = self._encode(self.target, fut)
+            tgt = fn.layer_norm(tgt, tgt.shape[-1:])
+        z_now, z_past = self._encode(self.context, now), self._encode(self.context, past)
+        gl = self.context.embed_glob(now["glob"])[:, None, :]
+        adj = adjacency(self.mask, now["elev"], now["on"])
+        k = torch.arange(h).repeat_interleave(b)
+        rep = lambda t: t.repeat(h, *([1] * (t.dim() - 1)))  # noqa: E731
+        pred = self.predictor(rep(z_now), rep(z_past), rep(gl), rep(adj), k)
+        per_h = fn.smooth_l1_loss(pred, tgt, reduction="none").mean(dim=(1, 2)).view(h, b).mean(1)
+        jepa = per_h.mean()
+        var = variance_hinge(z_now)
+        return {"loss": jepa + var_weight * var, "jepa": jepa, "var": var, "per_horizon": per_h}
+
+    @torch.no_grad()
+    def ema_update(self, momentum: float) -> None:
+        for pt, pc in zip(self.target.parameters(), self.context.parameters(), strict=True):
+            pt.mul_(momentum).add_(pc.detach(), alpha=1 - momentum)
