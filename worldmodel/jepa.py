@@ -280,3 +280,52 @@ class TemporalJEPA(nn.Module):
     def ema_update(self, momentum: float) -> None:
         for pt, pc in zip(self.target.parameters(), self.context.parameters(), strict=True):
             pt.mul_(momentum).add_(pc.detach(), alpha=1 - momentum)
+
+
+# --- generative baseline: same network, loss in input space -------------------------------
+
+
+class GenerativeForecaster(TemporalJEPA):
+    """The temporal JEPA's encoder and predictor, trained to regress the future *inputs*.
+
+    Same architecture and size; the only change is the objective. The predicted
+    latent for t + k goes through a small decoder to the normalized patch features
+    at t + k (a next-state regressor, generative in input space) instead of being
+    matched to an EMA target encoder's latent. There is no target encoder in the
+    loss, so there is nothing to collapse onto, and no EMA.
+    """
+
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+        d, n_in = self.config["hidden"], self.config["n_in"]
+        self.decoder = mlp(d, d, n_in)
+        self.config["generative"] = True
+
+    def loss(self, now: dict, past: dict, futures: list[dict], var_weight: float = 0.0,
+             acts: list[dict] | None = None) -> dict:  # fmt: skip
+        h = len(futures)
+        b = now["nodes"].shape[0]
+        z_now, z_past = self._encode(self.context, now), self._encode(self.context, past)
+        gl = self.context.embed_glob(now["glob"])[:, None, :]
+        adj = adjacency(self.mask, now["elev"], now["on"])
+        k = torch.arange(h).repeat_interleave(b)
+        rep = lambda t: t.repeat(h, *([1] * (t.dim() - 1)))  # noqa: E731
+        pred = self.predictor(rep(z_now), rep(z_past), rep(gl), rep(adj), k)
+        recon = self.decoder(pred)
+        target = torch.cat([f["nodes"] for f in futures])
+        per = fn.smooth_l1_loss(recon, target, reduction="none").mean(dim=(1, 2)).view(h, b)
+        per_h = per.mean(1)
+        rec = per_h.mean()
+        var = variance_hinge(z_now)
+        zero = rec * 0
+        return {
+            "loss": rec + var_weight * var,
+            "jepa": rec,
+            "var": var + zero,
+            "per_horizon": per_h,
+        }
+
+    @torch.no_grad()
+    def ema_update(self, momentum: float) -> None:
+        """No target encoder to update; kept equal to the context encoder for probes."""
+        self.target.load_state_dict(self.context.state_dict())
