@@ -118,3 +118,123 @@ def collapse_stats(z: np.ndarray) -> dict:
     return {"std": float(z.std(0).mean()), "min_std": float(z.std(0).min()),
             "effective_rank": float(np.exp(-(p * np.log(p)).sum())),
             "dims": int(z.shape[1])}  # fmt: skip
+
+
+# --- forecast probes: frozen representations -> the Phase 4 forecast heads -------------------
+
+
+class LinearProbe:
+    """Linear map on standardized inputs. Ridge for squared error, IRLS for absolute error.
+
+    The Gram matrix is computed once, so trying several ridge strengths is cheap.
+    """
+
+    def __init__(self, x: np.ndarray, y: np.ndarray):
+        x = x.astype(np.float64)
+        self.mu, sd = x.mean(0), x.std(0)
+        self.sd = np.where(sd > 1e-8, sd, 1.0)
+        self.xs = np.concatenate([(x - self.mu) / self.sd, np.ones((len(x), 1))], 1)
+        self.y = y.astype(np.float64)
+        self.gram = self.xs.T @ self.xs
+        self.xty = self.xs.T @ self.y
+
+    def _reg(self, alpha: float) -> np.ndarray:
+        reg = alpha * len(self.xs) * np.eye(self.xs.shape[1])
+        reg[-1, -1] = 0.0  # intercept unpenalized
+        return reg
+
+    def ridge(self, alpha: float) -> np.ndarray:
+        return np.linalg.solve(self.gram + self._reg(alpha), self.xty)
+
+    def lad(self, alpha: float, iters: int = 12, eps: float = 1e-6) -> np.ndarray:
+        """Least absolute deviations (+ ridge penalty) by iteratively reweighted least squares."""
+        w = self.ridge(alpha)
+        scale = max(float(np.median(np.abs(self.y))), 1e-9)
+        for _ in range(iters):
+            r = np.abs(self.y - self.xs @ w)
+            q = 1.0 / np.maximum(r, eps * scale)
+            q /= q.mean()
+            a = (self.xs * q[:, None]).T @ self.xs
+            w = np.linalg.solve(a + self._reg(alpha), self.xs.T @ (q * self.y))
+        return w
+
+    def predict(self, w: np.ndarray, x: np.ndarray) -> np.ndarray:
+        return ((x - self.mu) / self.sd) @ w[:-1] + w[-1]
+
+
+FORECAST_ALPHAS = (1e-3, 1e-1, 10.0)
+
+
+def forecast_probes(feats: dict, samples: dict, rows: int = 8, cols: int = 8,
+                    alphas=FORECAST_ALPHAS, max_rows: int = 60_000,
+                    seed: int = 0) -> dict[str, np.ndarray]:  # fmt: skip
+    """Linear probes onto the Phase 4 targets (targets.build_samples), one per head and horizon.
+
+    feats:   {split: (S, H, N, D)} per-horizon representations, or a tuple of them to
+             concatenate; H may be 1 when a representation doesn't depend on the horizon
+    samples: {split: build_samples(...)}, with y_<head> and p_<head> of shape (S, N or E, H)
+
+    Links probes predict the change from today's links (persistence plus a linear
+    correction); the other heads' persistence is zero change, except mortality,
+    whose persistence (last window's rate) is not an input, so it is fit directly.
+    Probes are fit for the reported metric: least absolute deviations for the MAE
+    heads, least squares for links (Brier). The ridge strength is chosen per head
+    and horizon on the validation split, and each probe trains on at most
+    `max_rows` random training rows (patches or pairs), which keeps it to seconds.
+    Returns test-split predictions {head: (S, N or E, H)} in target units, ready
+    for targets.scores; probabilities are clipped to [0, 1].
+    """
+    from worldmodel.targets import HORIZONS_DAYS, NODE_HEADS
+
+    out = {}
+    for name in (*NODE_HEADS, "links"):
+        preds = []
+        for k in range(len(HORIZONS_DAYS)):
+            xs, ys, ps = {}, {}, {}
+            for split in ("train", "val", "test"):
+                y = samples[split][f"y_{name}"][..., k]
+                sel = np.arange(y.size)
+                if split == "train" and y.size > max_rows:
+                    sel = np.random.default_rng(seed).permutation(y.size)[:max_rows]
+                xs[split] = _gather(feats[split], k, sel, y.shape[1], name, rows, cols)
+                ys[split] = y.reshape(-1)[sel].astype(np.float64)
+                p = samples[split][f"p_{name}"][..., k].reshape(-1)[sel].astype(np.float64)
+                ps[split] = p if name == "links" else np.zeros_like(p)
+            probe = LinearProbe(xs["train"], ys["train"] - ps["train"])
+            fit = probe.ridge if name == "links" else probe.lad
+            best = None
+            for a in alphas:
+                w = fit(a)
+                pv = _clip(name, ps["val"] + probe.predict(w, xs["val"]))
+                d = pv - ys["val"]
+                err = np.mean(d**2) if name == "links" else np.mean(np.abs(d))
+                if best is None or err < best[0]:
+                    best = (err, w)
+            pt = _clip(name, ps["test"] + probe.predict(best[1], xs["test"]))
+            preds.append(pt.reshape(samples["test"][f"y_{name}"][..., k].shape))
+        out[name] = np.stack(preds, axis=-1)
+    return out
+
+
+def _gather(parts, k: int, sel: np.ndarray, width: int, name: str, rows: int,
+            cols: int) -> np.ndarray:  # fmt: skip
+    """Rows `sel` of the flattened (snapshot, node or pair) features for horizon k.
+
+    `parts` is one (S, H, N, D) array or a tuple of them, concatenated along D after
+    gathering, so a combined representation is never materialized in full.
+    """
+    parts = parts if isinstance(parts, tuple) else (parts,)
+    snap, j = np.divmod(sel, width)
+    out = []
+    for z in parts:
+        zk = z[:, min(k, z.shape[1] - 1)]
+        if name == "links":
+            pairs = adjacent_pairs(rows, cols)
+            out.append(zk[snap, pairs[j, 0]] + zk[snap, pairs[j, 1]])
+        else:
+            out.append(zk[snap, j])
+    return np.concatenate(out, axis=-1).astype(np.float64)
+
+
+def _clip(name: str, p: np.ndarray) -> np.ndarray:
+    return np.clip(p, 0.0, 1.0) if name in ("mortality", "links") else p
