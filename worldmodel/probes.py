@@ -165,14 +165,15 @@ class LinearProbe:
 FORECAST_ALPHAS = (1e-3, 1e-1, 10.0)
 
 
-def forecast_probes(feats: dict, samples: dict, rows: int = 8, cols: int = 8,
-                    alphas=FORECAST_ALPHAS, max_rows: int = 60_000,
-                    seed: int = 0) -> dict[str, np.ndarray]:  # fmt: skip
-    """Linear probes onto the Phase 4 targets (targets.build_samples), one per head and horizon.
+def fit_forecast_probes(feats: dict, samples: dict, rows: int = 8, cols: int = 8,
+                        alphas=FORECAST_ALPHAS, max_rows: int = 60_000,
+                        seed: int = 0) -> dict:  # fmt: skip
+    """Fit linear probes onto the Phase 4 targets (targets.build_samples), per head and horizon.
 
-    feats:   {split: (S, H, N, D)} per-horizon representations, or a tuple of them to
-             concatenate; H may be 1 when a representation doesn't depend on the horizon
-    samples: {split: build_samples(...)}, with y_<head> and p_<head> of shape (S, N or E, H)
+    feats:   {"train": ..., "val": ...} per-horizon representations (S, H, N, D), or a
+             tuple of them to concatenate; H may be 1 when a representation doesn't
+             depend on the horizon
+    samples: {"train": ..., "val": ...} build_samples(...) outputs
 
     Links probes predict the change from today's links (persistence plus a linear
     correction); the other heads' persistence is zero change, except mortality,
@@ -181,22 +182,20 @@ def forecast_probes(feats: dict, samples: dict, rows: int = 8, cols: int = 8,
     heads, least squares for links (Brier). The ridge strength is chosen per head
     and horizon on the validation split, and each probe trains on at most
     `max_rows` random training rows (patches or pairs), which keeps it to seconds.
-    Returns test-split predictions {head: (S, N or E, H)} in target units, ready
-    for targets.scores; probabilities are clipped to [0, 1].
+    Returns {(head, k): (probe, weights)} for apply_forecast_probes.
     """
     from worldmodel.targets import HORIZONS_DAYS, NODE_HEADS
 
-    out = {}
+    fitted = {}
     for name in (*NODE_HEADS, "links"):
-        preds = []
         for k in range(len(HORIZONS_DAYS)):
             xs, ys, ps = {}, {}, {}
-            for split in ("train", "val", "test"):
+            for split in ("train", "val"):
                 y = samples[split][f"y_{name}"][..., k]
                 sel = np.arange(y.size)
                 if split == "train" and y.size > max_rows:
                     sel = np.random.default_rng(seed).permutation(y.size)[:max_rows]
-                xs[split] = _gather(feats[split], k, sel, y.shape[1], name, rows, cols)
+                xs[split] = gather(feats[split], k, sel, y.shape[1], name, rows, cols)
                 ys[split] = y.reshape(-1)[sel].astype(np.float64)
                 p = samples[split][f"p_{name}"][..., k].reshape(-1)[sel].astype(np.float64)
                 ps[split] = p if name == "links" else np.zeros_like(p)
@@ -210,13 +209,41 @@ def forecast_probes(feats: dict, samples: dict, rows: int = 8, cols: int = 8,
                 err = np.mean(d**2) if name == "links" else np.mean(np.abs(d))
                 if best is None or err < best[0]:
                     best = (err, w)
-            pt = _clip(name, ps["test"] + probe.predict(best[1], xs["test"]))
-            preds.append(pt.reshape(samples["test"][f"y_{name}"][..., k].shape))
+            probe.xs = probe.y = None  # keep only what predicting needs
+            fitted[(name, k)] = (probe, best[1])
+    return fitted
+
+
+def apply_forecast_probes(fitted: dict, feats, samples: dict, rows: int = 8,
+                          cols: int = 8) -> dict[str, np.ndarray]:  # fmt: skip
+    """Predictions {head: (S, N or E, H)} in target units for one split, for targets.scores.
+
+    feats is that split's (S, H, N, D) representation (or tuple); samples needs
+    y_<head> (for shapes) and p_links. Probabilities are clipped to [0, 1].
+    """
+    from worldmodel.targets import HORIZONS_DAYS, NODE_HEADS
+
+    out = {}
+    for name in (*NODE_HEADS, "links"):
+        preds = []
+        for k in range(len(HORIZONS_DAYS)):
+            shape = samples[f"y_{name}"][..., k].shape
+            x = gather(feats, k, np.arange(int(np.prod(shape))), shape[1], name, rows, cols)
+            probe, w = fitted[(name, k)]
+            base = samples["p_links"][..., k].reshape(-1) if name == "links" else 0.0
+            preds.append(_clip(name, base + probe.predict(w, x)).reshape(shape))
         out[name] = np.stack(preds, axis=-1)
     return out
 
 
-def _gather(parts, k: int, sel: np.ndarray, width: int, name: str, rows: int,
+def forecast_probes(feats: dict, samples: dict, rows: int = 8, cols: int = 8,
+                    **kw) -> dict[str, np.ndarray]:  # fmt: skip
+    """Fit on train/val (fit_forecast_probes), predict the test split (apply_forecast_probes)."""
+    fitted = fit_forecast_probes(feats, samples, rows, cols, **kw)
+    return apply_forecast_probes(fitted, feats["test"], samples["test"], rows, cols)
+
+
+def gather(parts, k: int, sel: np.ndarray, width: int, name: str, rows: int,
             cols: int) -> np.ndarray:  # fmt: skip
     """Rows `sel` of the flattened (snapshot, node or pair) features for horizon k.
 

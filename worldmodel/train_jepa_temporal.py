@@ -42,6 +42,13 @@ import numpy as np
 import torch
 
 from worldmodel.dataset import OUT, load
+from worldmodel.forcing import (
+    cumulative_forcing,
+    parse_intents,
+    transform_forcing,
+    weather_window,
+    window,
+)
 from worldmodel.graph import F, on_network
 from worldmodel.jepa import StaticJEPA, TemporalJEPA, momentum_at
 from worldmodel.probes import collapse_stats, forecast_probes
@@ -64,9 +71,14 @@ def snapshot_tensors(x: np.ndarray, g: np.ndarray, meta: dict) -> dict[str, torc
 
 
 class Worlds:
-    """Raw daily snapshots of several worlds, indexed by (world, day) for t, t - 7, t + k."""
+    """Raw daily snapshots of several worlds, indexed by (world, day) for t, t - 7, t + k.
 
-    def __init__(self, seeds, data_dir: Path, meta: dict, stride: int = 1):
+    With `forcing_meta` (action-conditioned models), it also serves the forcing over
+    (t, t + k]: per-patch interventions and the window's weather (see forcing.py).
+    """
+
+    def __init__(self, seeds, data_dir: Path, meta: dict, stride: int = 1,
+                 forcing_meta: dict | None = None):  # fmt: skip
         self.runs = [load(data_dir / f"run_{s}.npz") for s in seeds]
         self.snaps = [snapshot_tensors(r["x"], r["g"], meta) for r in self.runs]
         offsets = np.cumsum([0] + [len(r["x"]) for r in self.runs])
@@ -78,6 +90,24 @@ class Worlds:
             days = np.arange(back, len(run["x"]) - max(HORIZONS_DAYS))[::stride]
             idx.append(offsets[w] + days)
         self.t = torch.as_tensor(np.concatenate(idx))
+        self.forcing_meta = forcing_meta
+        if forcing_meta is not None:
+            cums, wcums = [], []
+            for run in self.runs:
+                rows, cols = (int(v) for v in run["grid"])
+                cums.append(cumulative_forcing(parse_intents(run["intents"]), run["ticks"],
+                                               rows, cols))  # fmt: skip
+                wcums.append(np.cumsum(run["w"], axis=0))
+            self.cum = np.concatenate(cums)  # windows never cross worlds: t + k is a valid day
+            self.wcum = np.concatenate(wcums)
+
+    def acts(self, rows: torch.Tensor, days: int) -> dict[str, torch.Tensor]:
+        """Normalized forcing between snapshots `rows` and `rows + days`."""
+        m, r = self.forcing_meta, rows.numpy()
+        f = transform_forcing(window(self.cum, r, days), np.array(m["forcing_scale"]))
+        w = (weather_window(self.wcum, r, days) - m["weather_mean"]) / m["weather_std"]
+        return {"forcing": torch.as_tensor(f, dtype=torch.float32),
+                "weather": torch.as_tensor(w, dtype=torch.float32)}  # fmt: skip
 
     def at(self, rows: torch.Tensor, shift: int = 0) -> dict[str, torch.Tensor]:
         return {k: v[rows + shift] for k, v in self.flat.items()}
@@ -101,8 +131,10 @@ def train(model: TemporalJEPA, worlds: Worlds, *, epochs: int, batch: int, lr: f
         per_h = np.zeros(len(HORIZONS_DAYS))
         for i in range(0, n, batch):
             rows = worlds.t[perm[i : i + batch]]
+            acts = [worlds.acts(rows, h) for h in HORIZONS_DAYS] if conditioned(model) else None
             out = model.loss(worlds.at(rows), worlds.at(rows, -TREND_DAYS),
-                             [worlds.at(rows, h) for h in HORIZONS_DAYS], var_weight)  # fmt: skip
+                             [worlds.at(rows, h) for h in HORIZONS_DAYS], var_weight,
+                             acts)  # fmt: skip
             opt.zero_grad()
             out["loss"].backward()
             torch.nn.utils.clip_grad_norm_(params, 1.0)
@@ -127,6 +159,10 @@ def train(model: TemporalJEPA, worlds: Worlds, *, epochs: int, batch: int, lr: f
     return curve
 
 
+def conditioned(model: TemporalJEPA) -> bool:
+    return model.predictor.act is not None
+
+
 def predicted(model: TemporalJEPA, worlds: Worlds, rows: torch.Tensor,
               batch: int = 256) -> np.ndarray:  # fmt: skip
     """(S, H, N, D) frozen predicted latents for t + k, every horizon."""
@@ -137,9 +173,10 @@ def predicted(model: TemporalJEPA, worlds: Worlds, rows: torch.Tensor,
             r = rows[i : i + batch]
             now, past = worlds.at(r), worlds.at(r, -TREND_DAYS)
             per_h = []
-            for k in range(len(HORIZONS_DAYS)):
+            for k, h in enumerate(HORIZONS_DAYS):
                 kk = torch.full((len(r),), k, dtype=torch.long)
-                per_h.append(model.predict(now, past, kk)[1])
+                act = worlds.acts(r, h) if conditioned(model) else None
+                per_h.append(model.predict(now, past, kk, act)[1])
             out.append(torch.stack(per_h, dim=1))
     return torch.cat(out).numpy()
 
