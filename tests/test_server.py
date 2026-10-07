@@ -143,3 +143,17 @@ def test_websocket_protocol():
             assert _reply(ws)["type"] == "ack"
         record = client.get("/api/record").json()
         assert any(i["kind"] == "seed" for i in record["intents"])
+
+
+def test_frame_carries_forecasts():
+    """Phase 4 done-when, in-game half: the live session forecasts every day."""
+    g = GameSession(seed=3, agents=False)
+    assert not g.frame()["forecast"]["available"]  # needs a week of history first
+    g.advance(9 * TICKS_PER_DAY)
+    fc = g.frame()["forecast"]
+    assert fc["available"], fc
+    assert fc["made_day"] == 9 and fc["horizons"] == [1, 7, 30]
+    for head in ("biomass", "contamination", "moisture", "mortality"):
+        assert len(fc["heads"][head]["30"]) == 64
+    assert len(fc["heads"]["links"]["7"]) == len(fc["pairs"]) == 112
+    assert "biomass@30d" in fc["skill"]
