@@ -10,9 +10,9 @@ Shrooms is a **learning sandbox first**. Each part of it teaches one of three sk
 
 ## Status
 
-**Phase 3 (game feel) built; Gate B half-verified.** A FastAPI/WebSocket server streams the live sim to a PixiJS client with a surface view and an underground view (the glowing hyphal network, with the keystone agent's nutrient shuttles as travelling pulses). There's a HUD with time controls, remediation tools, an inspector showing the agent's observation → intent → rationale, a whisper box to the agent, and a research/game mode switch. A Scenario Director paces game mode. The first scenario, **brownfield remediation**, is playable end to end: in CI, a scripted gardener wins it and an idle one loses.
+**Phase 4 (graphs + baseline) done.** The ecosystem is now a typed graph: 64 patch nodes, an atmosphere node, and adjacent, downslope and hyphal edges. A research-mode generator produces batched headless runs, and a supervised GNN forecasts biomass, contamination, moisture, die-back and fungal links at 24 h, 7 d and 30 d. On four test worlds it never saw, it **beats persistence on every head at 7 and 30 days**: errors are 36% smaller at 7 days and 43% smaller at 30 days, averaged over heads. Forecasts run live in the game as a map overlay. The one loss is fungal links at 24 h, where persistence is near-perfect. The 1,000 ticks/s generator target is **not met on this 2-core sandbox** (557 ticks/s across 2 workers; it scales with cores).
 
-The 60 fps half of Gate B is **not yet verified on a real GPU**. Measured so far in headless Chromium on SwiftShader (a CPU software rasterizer), the dense benchmark reaches 35–43 fps at 800×450 with 4,700–9,700 entities; per-frame JS work is about 0.1 ms. At 1600×900 software fill rate drops it to single digits. Open `/?bench` on a machine with a GPU to check. Phase 2's agents have only run on the scripted stand-in so far. See [ROADMAP.md](ROADMAP.md).
+Still open from Phase 3: the 60 fps half of Gate B is unverified on a real GPU (open `/?bench` on a machine with one). Phase 2's agents have only run on the scripted stand-in. See [ROADMAP.md](ROADMAP.md).
 
 ## Core design rules
 
@@ -79,17 +79,25 @@ client/             PixiJS game (TypeScript, Vite)
   src/hud.ts        time controls, tools, objectives, inspector, whisper, feed
   src/net.ts        WebSocket connection and frame decoding
 notebooks/          one learning notebook per phase
+worldmodel/         graphs, dataset, forecasters
+  graph.py          typed patch/atmosphere nodes; adjacent, downslope, hyphal edges
+  dataset.py        research-mode batched runs with random interventions, daily snapshots
+  targets.py        forecast heads, persistence baselines, skill scores
+  gnn.py            supervised GNN (PyTorch): typed message passing, node and link heads
+  forecast.py       numpy twin of the GNN for torch-free inference (server, CI)
+  train.py          training, model selection, export
+  forecaster.npz    the trained model (+ forecaster_metrics.json)
 tests/              roadmap gates, component and per-guild ecology tests
 data/               trajectory store (gitignored)
 ```
 
-Planned: `worldmodel/` (graphs, GNN, JEPA, Phases 4–6).
+Planned: JEPA latent dynamics (Phase 5) and model comparison (Phase 6), in `worldmodel/`.
 
 ## Stack
 
-In use: Python 3.12 (NumPy, Pydantic, matplotlib, LangGraph + SQLite checkpointer, httpx, FastAPI, uvicorn) · Ollama / vLLM · TypeScript (Vite, PixiJS v8) · uv, pnpm, pre-commit, GitHub Actions.
+In use: Python 3.12 (NumPy, Pydantic, matplotlib, LangGraph + SQLite checkpointer, httpx, FastAPI, uvicorn, Numba; PyTorch for training only) · Ollama / vLLM · TypeScript (Vite, PixiJS v8) · uv, pnpm, pre-commit, GitHub Actions.
 
-Planned: Numba, PyTorch Geometric, Parquet + DuckDB, Docker Compose.
+Planned: Parquet + DuckDB, Docker Compose. PyTorch Geometric turned out unnecessary at 64 nodes: dense per-type adjacency in plain PyTorch is simpler.
 
 ## Getting started
 
@@ -139,6 +147,18 @@ uv run python -m server --mode research --seed 7             # no director; tool
 For client development, run `pnpm dev` in `client/` alongside the server and open http://localhost:5173; it proxies `/ws` and `/api` to :8000.
 
 **How to play brownfield.** An old industrial pad (the gold square) has been stripped to subsoil and soaked in hydrocarbons. Within three years, get the contaminant below 25%, plant cover above 60%, and 10 of the 16 site patches onto the fungal network. Pick a tool on the left and click the map. Bacteria and compost drive cleanup, but fungi only establish on clean ground, so the objectives have to come in order. Space pauses and plays, Tab flips between surface and underground, Esc drops the tool. Watch the inspector to see what the mycelial network decides each week, and whisper to it, for example "help r3c4". It may refuse, and it will say why. A budget grant arrives monthly; the director answers if you race ahead or fall behind.
+
+**Forecasts.** Under *Forecast (GNN)*, pick a horizon (24 h, 7 d, 30 d) and a head. Patches are tinted green for good news and red for bad: more plants or water, less contamination. Die-back risk shows in red; fungal links show as forming (green) or breaking (red). Hover a patch for its number. The note gives that head's tested skill against "no change", so you know how far to trust it.
+
+### World model
+
+```bash
+uv sync --group worldmodel                                  # adds PyTorch (training only)
+uv run python -m worldmodel.dataset --seeds 0-27 --workers 2  # 28 two-year worlds, ~15 min on 2 cores
+uv run python -m worldmodel.train                             # ~10 min on CPU; writes worldmodel/forecaster.npz
+```
+
+Splits are by world: seeds 0–19 train, 20–23 select the best epoch, 24–27 are reported. The game server and CI use the exported numpy model, so they don't need PyTorch.
 
 `/?bench` renders a dense synthetic world without a server and reports fps (`&view=underground`, `&aa=0`, `&regen=0` vary it). `/api/record` downloads the session's replay record.
 
