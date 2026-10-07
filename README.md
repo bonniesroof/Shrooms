@@ -12,9 +12,16 @@ Shrooms is a **learning sandbox first**. Each part of it teaches one of three sk
 
 **Phase 4 (graphs + baseline) done.** The ecosystem is now a typed graph: 64 patch nodes, an atmosphere node, and adjacent, downslope and hyphal edges. A research-mode generator produces batched headless runs, and a supervised GNN forecasts biomass, contamination, moisture, die-back and fungal links at 24 h, 7 d and 30 d. On four test worlds it never saw, it **beats persistence on every head at 7 and 30 days**: errors are 36% smaller at 7 days and 43% smaller at 30 days, averaged over heads. Forecasts run live in the game as a map overlay. The one loss is fungal links at 24 h, where persistence is near-perfect. The 1,000 ticks/s generator target is **not met on this 2-core sandbox** (557 ticks/s across 2 workers; it scales with cores).
 
-**Phase 5 (JEPA) in progress: steps 1 and 2 of 4 done.** A static graph JEPA learns patch latents without labels. It hides a block of patches in a daily snapshot and predicts their latents from the rest; an EMA target encoder supplies the latents to predict. Linear probes on test worlds show where it stands. For a **hidden** patch, its predicted latent gives mean R² 0.76 on current biomass, contamination, moisture and network membership, against 0.55 for the raw features of its visible 1-hop neighbours and 0.38 for the same network untrained. Moisture is the exception: it is spatially smooth, so raw neighbours do as well as JEPA (R² 0.825 vs 0.826), and beat it in a 15%-mask run (0.839 vs 0.828). For a **visible** patch, the latents keep the state (mean R² 0.89), but no better than a random-init network (0.92) or the raw features themselves (0.90). No collapse: the effective rank is 37 of 64.
+**Phase 5 (JEPA) in progress: steps 1–3 of 4 done.** A static graph JEPA learns patch latents without labels. It hides a block of patches in a daily snapshot and predicts their latents from the rest; an EMA target encoder supplies the latents to predict. Linear probes on test worlds show where it stands. For a **hidden** patch, its predicted latent gives mean R² 0.76 on current biomass, contamination, moisture and network membership, against 0.55 for the raw features of its visible 1-hop neighbours and 0.38 for the same network untrained. Moisture is the exception: it is spatially smooth, so raw neighbours do as well as JEPA (R² 0.825 vs 0.826), and beat it in a 15%-mask run (0.839 vs 0.828). For a **visible** patch, the latents keep the state (mean R² 0.89), but no better than a random-init network (0.92) or the raw features themselves (0.90). No collapse: the effective rank is 37 of 64.
 
-Step 2, the temporal JEPA, predicts the latents of the snapshot at t + 1, 7 and 30 days from the latents at t. Probed linearly onto the Phase 4 forecast heads, it **does not yet beat the supervised GNN or linear probes on raw features**. Mean skill against persistence on the test worlds at 1, 7 and 30 days: JEPA probe 0.22 / 0.21 / 0.23, raw-feature probe 0.28 / 0.27 / 0.30, GNN 0.26 / 0.36 / 0.43. One caveat inflates all of these. Die-back is zero almost everywhere, so under MAE an intercept-only "no die-back" probe already scores about 0.5 skill on it, and every probe gets that for free; a constant probe's mean is 0.13 / 0.10 / 0.10. Without die-back the means are: JEPA 0.15 / 0.14 / 0.17, raw 0.22 / 0.21 / 0.25, raw + JEPA 0.23 / 0.23 / 0.27, GNN 0.22 / 0.32 / 0.42. The latents add a little on top of raw features: on contamination about equally at every horizon, and on links mostly at 30 days. Metrics come from the full-precision model; the checkpoint is stored in fp16. Next comes the action-conditioned version.
+Step 2, the temporal JEPA, predicts the latents of the snapshot at t + 1, 7 and 30 days from the latents at t. Probed linearly onto the Phase 4 forecast heads, it **does not yet beat the supervised GNN or linear probes on raw features**. Mean skill against persistence on the test worlds at 1, 7 and 30 days: JEPA probe 0.22 / 0.21 / 0.23, raw-feature probe 0.28 / 0.27 / 0.30, GNN 0.26 / 0.36 / 0.43. One caveat inflates all of these. Die-back is zero almost everywhere, so under MAE an intercept-only "no die-back" probe already scores about 0.5 skill on it, and every probe gets that for free; a constant probe's mean is 0.13 / 0.10 / 0.10. Without die-back the means are: JEPA 0.15 / 0.14 / 0.17, raw 0.22 / 0.21 / 0.25, raw + JEPA 0.23 / 0.23 / 0.27, GNN 0.22 / 0.32 / 0.42. The latents add a little on top of raw features: on contamination about equally at every horizon, and on links mostly at 30 days. Metrics come from the full-precision model; the checkpoint is stored in fp16. 
+
+Step 3, the action-conditioned JEPA, also tells the predictor what happens between t and t + k: every intervention in the window, per patch and kind, and the window's mean weather. It is trained on a new forcing dataset with an intervention every 10 days at probability 0.6 and the applied intents recorded (`dataset.py --mode forcing`: 28 two-year worlds, 11 min). It is tested on 52 spill-vs-no-spill counterfactual pairs, branched from held-out worlds and rolled forward by the deterministic sim. Results on the test worlds:
+
+- **Counterfactuals.** Read through a least-squares probe of the contamination level, the predicted spill effect has the right sign on 99.6% of affected patches and a spatial correlation of 0.88 with the true effect map. It finds the most affected patch 62% of the time, but overshoots the magnitude by 1.3–1.4×; effect skill is 0.25 at 7 days and 0.22 at 30 days. The step-2 model can't tell the branches apart, so it scores 0 by construction. The Phase 4 forecast probes barely react to the spill: they are LAD fits of mostly-zero changes, so a rare event moves them by almost nothing. The model doesn't get the spill's small effect on biomass (true mean 0.002 log units at 30 days); its predictions there are noise.
+- **Forecast skill.** Being told the forcing helps the JEPA latents only marginally: mean skill 0.21 / 0.20 / 0.22 at 1 / 7 / 30 days, against 0.21 / 0.20 / 0.22 for step 2 on the same data; without die-back, 0.14 / 0.13 / 0.16 against 0.13 / 0.12 / 0.16. A linear probe on raw inputs plus the same forcing features does far better: 0.41 / 0.42 / 0.38 (0.39 / 0.40 / 0.36 without die-back). That is mostly because the window's weather predicts moisture almost directly (skill 0.91 at 1 day), and it beats the GNN, which isn't told the future weather. The JEPA's latents don't pass that weather through to a linear readout.
+
+Next comes collapse monitoring and the comparison against the GNN and a generative baseline.
 
 Still open from Phase 3: the 60 fps half of Gate B is unverified on a real GPU (open `/?bench` on a machine with one). Phase 2's agents have only run on the scripted stand-in. See [ROADMAP.md](ROADMAP.md).
 
@@ -85,23 +92,29 @@ client/             PixiJS game (TypeScript, Vite)
 notebooks/          one learning notebook per phase
 worldmodel/         graphs, dataset, forecasters
   graph.py          typed patch/atmosphere nodes; adjacent, downslope, hyphal edges
-  dataset.py        research-mode batched runs with random interventions, daily snapshots
+  dataset.py        research-mode batched runs with random interventions, daily snapshots;
+                    `--mode forcing` records the applied intents and daily weather (data/phase5)
   targets.py        forecast heads, persistence baselines, skill scores
   gnn.py            supervised GNN (PyTorch): typed message passing, node and link heads
   forecast.py       numpy twin of the GNN for torch-free inference (server, CI)
   train.py          training, model selection, export
   forecaster.npz    the trained model (+ forecaster_metrics.json)
-  jepa.py           graph JEPAs (PyTorch): static (masked patches) and temporal (t -> t + k)
+  jepa.py           graph JEPAs (PyTorch): static (masked patches), temporal (t -> t + k),
+                    and action-conditioned (given interventions and weather)
   probes.py         linear probes (state and forecast heads) and collapse stats, numpy
   train_jepa.py     self-supervised training on snapshots, probes vs random init and raw features
   jepa_static.pt    the trained JEPA (+ jepa_static_metrics.json)
   train_jepa_temporal.py  temporal JEPA (latents at t -> t + k), forecast probes vs persistence and GNN
   jepa_temporal.pt  the trained temporal JEPA (+ jepa_temporal_metrics.json)
+  forcing.py        interventions (per patch, per kind) and weather between two snapshots
+  counterfactual.py spill vs no-spill branches from the same moment, rolled out by the sim
+  train_jepa_action.py  action-conditioned JEPA; forecast probes and counterfactual tests
+  jepa_action.pt    the trained action-conditioned JEPA (+ jepa_action_metrics.json)
 tests/              roadmap gates, component and per-guild ecology tests
 data/               trajectory store (gitignored)
 ```
 
-Planned: action-conditioned JEPA, and the comparison against the GNN baseline (rest of Phase 5), in `worldmodel/`.
+Planned: collapse monitoring and the comparison against the GNN and a generative baseline (rest of Phase 5), in `worldmodel/`.
 
 ## Stack
 
@@ -168,6 +181,9 @@ uv run python -m worldmodel.dataset --seeds 0-27 --workers 2  # 28 two-year worl
 uv run python -m worldmodel.train                             # ~10 min on CPU; writes worldmodel/forecaster.npz
 uv run python -m worldmodel.train_jepa                        # ~9 min on CPU; writes worldmodel/jepa_static.pt
 uv run python -m worldmodel.train_jepa_temporal               # ~5 min on CPU; writes worldmodel/jepa_temporal.pt
+uv run python -m worldmodel.dataset --mode forcing --seeds 0-27   # ~11 min; worlds with recorded interventions
+uv run python -m worldmodel.counterfactual                    # ~3 min; spill vs no-spill pairs on test worlds
+uv run python -m worldmodel.train_jepa_action                 # ~5 min on CPU; writes worldmodel/jepa_action.pt
 ```
 
 Splits are by world: seeds 0–19 train, 20–23 select the best epoch, 24–27 are reported. The game server and CI use the exported numpy model, so they don't need PyTorch.
