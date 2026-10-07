@@ -121,7 +121,7 @@ Submit intents from a JSON file with `--intents`, for example a clearing and a s
 
 Records from runs with intents get an intent hash in their filename, so they never overwrite each other.
 
-Notebooks: `uv sync --group notebooks && uv run jupyter lab`, then open `notebooks/phase2_agent_brain.ipynb`. The Phase 0 and Phase 1 notebooks run against tags `v0.0` and `v0.1`.
+Notebooks: `uv sync --group notebooks && uv run jupyter lab`, then open any notebook from Phase 2 on (for example `notebooks/phase3_game_feel.ipynb`). The Phase 0 and Phase 1 notebooks run against tags `v0.0` and `v0.1`.
 
 Agents (a year makes ~117 model calls; both agents share one model so a 10 GB GPU never swaps):
 
@@ -170,6 +170,8 @@ Splits are by world: seeds 0–19 train, 20–23 select the best epoch, 24–27 
 - **[Phase 0 notebook](notebooks/phase0_foundations.ipynb):** what was built, determinism, the carbon budget, and what broke
 - **[Phase 1 notebook](notebooks/phase1_living_soil.ipynb):** nutrient cycling, the mycorrhizal market experiments, the brownfield signature, and the tuning log
 - **[Phase 2 notebook](notebooks/phase2_agent_brain.ipynb):** a decision end to end, validator feedback, replay without a model, whether the agent helps, and what broke
+- **[Phase 3 notebook](notebooks/phase3_game_feel.ipynb):** the brownfield scenario, tools and modes, scripted players, the Scenario Director, a whisper, agent latency, the WebSocket protocol, replay, and Gate B status
+- **[Phase 4 notebook](notebooks/phase4_graphs_baseline.ipynb):** the ecosystem as a graph, forecast targets against persistence, a held-out world, speed, and what broke
 
 ## Contributing
 
