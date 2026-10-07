@@ -8,7 +8,16 @@ import numpy as np
 import pytest
 
 from worldmodel.dataset import generate_run
-from worldmodel.probes import Ridge, collapse_stats, probe_targets, r2, run_probes
+from worldmodel.probes import (
+    LinearProbe,
+    Ridge,
+    collapse_stats,
+    forecast_probes,
+    probe_targets,
+    r2,
+    run_probes,
+)
+from worldmodel.targets import HORIZONS_DAYS, build_samples, scores
 
 
 def test_ridge_recovers_a_linear_map():
@@ -38,13 +47,49 @@ def test_probes_run_and_raw_features_probe_themselves():
     assert out["biomass"]["test_r2"] > 0.99  # log1p(plant C) is itself a raw feature
 
 
+def test_lad_probe_fits_the_median_not_the_mean():
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(400, 3))
+    y = x @ np.array([1.0, 0.0, -1.0])
+    y[:40] += 50.0  # 10% gross outliers pull least squares, not least absolute deviations
+    p = LinearProbe(x, y)
+    lad = np.abs(p.predict(p.lad(1e-6), x[40:]) - y[40:]).mean()
+    ls = np.abs(p.predict(p.ridge(1e-6), x[40:]) - y[40:]).mean()
+    assert lad < 0.05 < ls
+
+
+@pytest.fixture(scope="module")
+def forecast_samples():
+    """Phase 4 samples from a short world, split by time into train / val / test."""
+    s = build_samples(generate_run(905, days=110))  # 50 samples
+    cut = {"train": slice(0, 30), "val": slice(30, 40), "test": slice(40, 50)}
+    return {k: {n: v[sl] for n, v in s.items()} for k, sl in cut.items()}
+
+
+def test_forecast_probes_score_like_the_gnn(forecast_samples):
+    s = forecast_samples
+    feats = {k: v["nodes"][:, None].astype(np.float32) for k, v in s.items()}
+    pred = forecast_probes(feats, s)
+    for name in ("biomass", "contamination", "moisture", "mortality", "links"):
+        assert pred[name].shape == s["test"][f"y_{name}"].shape
+    assert 0 <= pred["links"].min() and pred["links"].max() <= 1
+    out = scores(pred, s["test"])
+    assert set(out) >= {f"mean_skill@{h}d" for h in HORIZONS_DAYS}
+    # combined representations are gathered piecewise, identical to concatenating first
+    both = forecast_probes({k: (v, v) for k, v in feats.items()}, s)
+    cat = forecast_probes({k: np.concatenate([v, v], -1) for k, v in feats.items()}, s)
+    assert all(np.allclose(both[n], cat[n]) for n in both)
+
+
 # --- the model ------------------------------------------------------------------------------
 
 try:
     import torch
 
-    from worldmodel.jepa import StaticJEPA, block_mask, momentum_at
+    from worldmodel.jepa import StaticJEPA, TemporalJEPA, block_mask, momentum_at
     from worldmodel.train_jepa import inputs, normalizers, train
+    from worldmodel.train_jepa_temporal import Worlds, samples_for
+    from worldmodel.train_jepa_temporal import train as train_temporal
 except ImportError:  # the optional `worldmodel` group isn't installed (CI)
     torch = None
 
@@ -137,3 +182,72 @@ def test_training_is_deterministic_with_a_seed(tiny):
                       seed=3, log=lambda s: None)  # fmt: skip
         runs.append((curve[-1]["loss"], next(m.target.parameters()).clone()))
     assert runs[0][0] == runs[1][0] and torch.equal(runs[0][1], runs[1][1])
+
+
+# --- temporal JEPA ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tiny_worlds(tmp_path_factory):
+    d = tmp_path_factory.mktemp("worlds")
+    run = generate_run(906, days=75)
+    np.savez(d / "run_906.npz", **run)
+    meta = normalizers({"x": run["x"], "g": run["g"]})
+    return Worlds([906], d, meta), meta
+
+
+def make_temporal(seed=0):
+    torch.manual_seed(seed)
+    return TemporalJEPA(n_in=14, n_glob=7, hidden=16, layers=2, pred_layers=1)
+
+
+@needs_torch
+def test_worlds_line_up_with_the_phase4_samples(tiny_worlds):
+    w, _ = tiny_worlds
+    s = samples_for(w, stride=1)
+    assert len(w.t) == len(s["day"]) == 75 - 30 - 30
+    assert np.array_equal(w.t.numpy(), s["day"])  # one world: flat index == day
+    later = w.at(w.t, HORIZONS_DAYS[-1])["elev"]
+    assert later.shape == (len(w.t), 64)
+
+
+@needs_torch
+def test_temporal_shapes_and_horizon_conditioning(tiny_worlds):
+    w, _ = tiny_worlds
+    m = make_temporal()
+    with torch.no_grad():
+        m.predictor.horizon.weight.normal_()  # distinct horizon embeddings
+    rows = w.t[:4]
+    now, past = w.at(rows), w.at(rows, -7)
+    z, p0 = m.predict(now, past, torch.zeros(4, dtype=torch.long))
+    _, p2 = m.predict(now, past, torch.full((4,), 2))
+    assert z.shape == p0.shape == (4, 64, 16)
+    assert not torch.allclose(p0, p2)
+    out = m.loss(now, past, [w.at(rows, h) for h in HORIZONS_DAYS])
+    assert out["per_horizon"].shape == (3,) and torch.isfinite(out["loss"])
+    assert all(not p.requires_grad for p in m.target.parameters())
+
+
+@needs_torch
+def test_temporal_encoders_start_from_a_static_checkpoint():
+    torch.manual_seed(1)
+    static = StaticJEPA(n_in=14, n_glob=7, hidden=16, layers=2, pred_layers=1)
+    m = make_temporal()
+    m.init_encoders(static.state_dict())
+    for name in ("context", "target"):
+        a, b = getattr(m, name).state_dict(), getattr(static, name).state_dict()
+        assert all(torch.equal(a[k], b[k]) for k in a)
+
+
+@needs_torch
+def test_temporal_loss_decreases_and_is_deterministic(tiny_worlds):
+    w, _ = tiny_worlds
+    curves = []
+    for _ in range(2):
+        m = make_temporal(seed=2)
+        curves.append(train_temporal(m, w, epochs=5, batch=5, lr=3e-3, var_weight=0.1, seed=2,
+                                     log=lambda s: None))  # fmt: skip
+    first, last = curves[0][0]["jepa"], curves[0][-1]["jepa"]
+    assert last < 0.7 * first, [c["jepa"] for c in curves[0]]
+    assert curves[0][-1]["loss"] == curves[1][-1]["loss"]
+    assert curves[0][-1]["pred_rank"] > 2
