@@ -280,11 +280,22 @@ def test_forcing_windows_hold_exactly_the_intents_between_snapshots():
     assert window(cum, 2, 1)[:, s].sum() == 0
 
 
+# sha256 of generate_run(2, days=20) as written before forcing mode existed (commit 7005a05)
+PHASE4_RUN2_SHA = "d4656cf2ecfdef654eb89b6bf96641ee14f345d09239ef8f30a26cb8d49ff86d"
+
+
 def test_forcing_mode_records_intents_and_keeps_phase4_runs_unchanged():
+    import hashlib
+
     a = generate_run(907, days=8, mode="forcing")
     assert "intents" in a and a["w"].shape == (8, 3)
-    b = generate_run(907, days=8)
-    assert "intents" not in b and "w" not in b
+    b = generate_run(2, days=20)  # a meadow with one intervention, on day 15
+    assert "intents" not in b and "w" not in b and b["interventions"] == 1
+    h = hashlib.sha256()
+    for k in sorted(b):
+        h.update(k.encode())
+        h.update(np.ascontiguousarray(np.asarray(b[k])).tobytes())
+    assert h.hexdigest() == PHASE4_RUN2_SHA  # Phase 4 data is byte-for-byte unchanged
 
 
 @needs_torch
