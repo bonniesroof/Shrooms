@@ -155,24 +155,41 @@ def momentum_at(step: int, total: int, start: float = 0.996, end: float = 1.0) -
     return end - (end - start) * (math.cos(math.pi * frac) + 1) / 2
 
 
-# --- temporal JEPA: predict the latents of t + k from t -------------------------------------
+# --- temporal JEPA: latents of t + k from t, optionally given the forcing in between ---------
 
 
 class TemporalPredictor(nn.Module):
-    """Latents at t and their change since t - 7 d, plus a horizon embedding -> latents at t + k."""
+    """Latents at t and their change since t - 7 d, plus a horizon embedding -> latents at t + k.
 
-    def __init__(self, hidden: int, layers: int, n_nodes: int, n_horizons: int):
+    With n_forcing / n_weather > 0 it is also told what happens in between
+    (action-conditioned): per-patch interventions enter each patch's input, and the
+    window's weather joins the atmosphere node. Both paths start at zero, so a
+    fresh action-conditioned predictor behaves exactly like its unconditioned twin.
+    """
+
+    def __init__(self, hidden: int, layers: int, n_nodes: int, n_horizons: int,
+                 n_forcing: int = 0, n_weather: int = 0):  # fmt: skip
         super().__init__()
         self.inp = mlp(2 * hidden, hidden, hidden)
         self.horizon = nn.Embedding(n_horizons, hidden)
         self.pos = nn.Parameter(torch.randn(n_nodes, hidden) * 0.02)
         self.layers = nn.ModuleList(Layer(hidden) for _ in range(layers))
         self.out = nn.Sequential(nn.LayerNorm(hidden), nn.Linear(hidden, hidden))
+        self.act = mlp(n_forcing, hidden, hidden) if n_forcing else None
+        self.weather = mlp(n_weather, hidden, hidden) if n_weather else None
+        for m in (self.act, self.weather):
+            if m is not None:
+                nn.init.zeros_(m[2].weight)
+                nn.init.zeros_(m[2].bias)
 
-    def forward(self, z_now, z_past, glob_latent, adj, k):
+    def forward(self, z_now, z_past, glob_latent, adj, k, forcing=None, weather=None):
         hk = self.horizon(k)[:, None, :]
         h = self.inp(torch.cat([z_now, z_now - z_past], dim=-1)) + self.pos + hk
         gl = glob_latent + hk
+        if self.act is not None:
+            h = h + self.act(forcing)
+        if self.weather is not None:
+            gl = gl + self.weather(weather)[:, None, :]
         for layer in self.layers:
             h = layer(h, adj, gl)
         return self.out(h)
@@ -184,23 +201,28 @@ class TemporalJEPA(nn.Module):
         x_t, x_{t-7} ──► context encoder ──► predictor(k) ──► ẑ_{t+k} ┐
         x_{t+k} ────────► target encoder (EMA, no grad) ──► z_{t+k} ───┘ smooth-L1
 
-    One predictor serves every horizon, told which by a learned embedding.
+    One predictor serves every horizon, told which by a learned embedding. With
+    n_forcing / n_weather set, the predictor is action-conditioned: it also gets the
+    interventions per patch and the weather over (t, t + k] (see forcing.py).
     """
 
     def __init__(self, n_in: int, n_glob: int, hidden: int = 64, layers: int = 3,
                  pred_layers: int = 2, n_horizons: int = 3, rows: int = 8,
-                 cols: int = 8):  # fmt: skip
+                 cols: int = 8, n_forcing: int = 0, n_weather: int = 0):  # fmt: skip
         super().__init__()
         self.config = {"n_in": n_in, "n_glob": n_glob, "hidden": hidden, "layers": layers,
                        "pred_layers": pred_layers, "n_horizons": n_horizons, "rows": rows,
                        "cols": cols}  # fmt: skip
+        if n_forcing or n_weather:
+            self.config.update(n_forcing=n_forcing, n_weather=n_weather)
         n = rows * cols
         self.register_buffer("mask", grid_mask(rows, cols))
         self.context = Encoder(n_in, n_glob, hidden, layers, n)
         self.target = copy.deepcopy(self.context)
         for p in self.target.parameters():
             p.requires_grad_(False)
-        self.predictor = TemporalPredictor(hidden, pred_layers, n, n_horizons)
+        self.predictor = TemporalPredictor(hidden, pred_layers, n, n_horizons, n_forcing,
+                                           n_weather)  # fmt: skip
 
     def init_encoders(self, static_state: dict) -> None:
         """Start both encoders from a trained StaticJEPA's, each from its namesake."""
@@ -212,15 +234,23 @@ class TemporalJEPA(nn.Module):
     def _encode(self, enc, s):
         return enc(s["nodes"], s["glob"], adjacency(self.mask, s["elev"], s["on"]))
 
-    def predict(self, now: dict, past: dict, k: torch.Tensor):
-        """(B, N, D) context latents at t, and (B, N, D) predicted latents at t + k[b]."""
+    def predict(self, now: dict, past: dict, k: torch.Tensor, act: dict | None = None):
+        """(B, N, D) context latents at t, and (B, N, D) predicted latents at t + k[b].
+
+        act: {"forcing": (B, N, C), "weather": (B, W)} for an action-conditioned model.
+        """
         z_now, z_past = self._encode(self.context, now), self._encode(self.context, past)
         gl = self.context.embed_glob(now["glob"])[:, None, :]
         adj = adjacency(self.mask, now["elev"], now["on"])
-        return z_now, self.predictor(z_now, z_past, gl, adj, k)
+        act = act or {}
+        return z_now, self.predictor(z_now, z_past, gl, adj, k, act.get("forcing"),
+                                     act.get("weather"))  # fmt: skip
 
-    def loss(self, now: dict, past: dict, futures: list[dict], var_weight: float = 0.1) -> dict:
-        """futures[i] is the snapshot at t + horizon i. All horizons in one stacked batch."""
+    def loss(self, now: dict, past: dict, futures: list[dict], var_weight: float = 0.1,
+             acts: list[dict] | None = None) -> dict:  # fmt: skip
+        """futures[i] is the snapshot at t + horizon i, acts[i] the forcing up to it.
+
+        All horizons go through the predictor as one stacked batch."""
         h = len(futures)
         b = now["nodes"].shape[0]
         with torch.no_grad():
@@ -232,7 +262,11 @@ class TemporalJEPA(nn.Module):
         adj = adjacency(self.mask, now["elev"], now["on"])
         k = torch.arange(h).repeat_interleave(b)
         rep = lambda t: t.repeat(h, *([1] * (t.dim() - 1)))  # noqa: E731
-        pred = self.predictor(rep(z_now), rep(z_past), rep(gl), rep(adj), k)
+        forcing = weather = None
+        if acts is not None:
+            forcing = torch.cat([a["forcing"] for a in acts]) if "forcing" in acts[0] else None
+            weather = torch.cat([a["weather"] for a in acts]) if "weather" in acts[0] else None
+        pred = self.predictor(rep(z_now), rep(z_past), rep(gl), rep(adj), k, forcing, weather)
         per_h = fn.smooth_l1_loss(pred, tgt, reduction="none").mean(dim=(1, 2)).view(h, b).mean(1)
         jepa = per_h.mean()
         var = variance_hinge(z_now)
