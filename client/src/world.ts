@@ -260,16 +260,18 @@ export class World {
       return;
     }
     const v = f.heads[this.forecastHead][key];
-    // Color scales: what counts as a big change for each head.
-    const scale = { biomass: 0.5, contamination: 0.3, moisture: 0.25, mortality: 0.5 }[this.forecastHead] ?? 1;
+    // Full color at twice the typical change for this head and horizon (die-back: at 30%).
+    const scale = this.forecastHead === "mortality" ? 0.3 : 2 * (f.typical[this.forecastHead]?.[key] ?? 1);
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const val = v[r * cols + c], t = Math.max(-1, Math.min(1, val / scale));
       let color: number, alpha: number;
-      if (this.forecastHead === "mortality") { color = 0xff3b2f; alpha = 0.7 * Math.max(0, t); }
+      if (this.forecastHead === "mortality") { color = 0xff3b2f; alpha = 0.75 * Math.max(0, t); }
       else {
         // Good news green, bad news red: more plants or water good, more contamination bad.
         const good = this.forecastHead === "contamination" ? -t : t;
-        color = good >= 0 ? 0x3cff8a : 0xff4a3a; alpha = 0.55 * Math.abs(good);
+        // Dead zone: changes under a tenth of full scale are noise; leave them clear.
+        color = good >= 0 ? 0x3cff8a : 0xff4a3a;
+        alpha = Math.abs(good) < 0.1 ? 0 : 0.15 + 0.55 * Math.abs(good);
       }
       if (alpha > 0.03) g.rect(c * S + 1, r * S + 1, S - 2, S - 2).fill({ color, alpha });
     }

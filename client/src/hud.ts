@@ -25,6 +25,7 @@ export class Hud {
   onForecast: (head: string, horizon: number) => void = () => {};
   private fcHead = "biomass";
   private fcHorizon = 0;
+  private lastForecast: Frame["forecast"] | null = null;
 
   constructor(private conn: Connection) {
     $("view").onclick = () => {
@@ -46,10 +47,12 @@ export class Hud {
       this.fcHorizon = Number(b.dataset.h);
       $("fc-horizon").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
       this.onForecast(this.fcHead, this.fcHorizon);
+      this.forecastNote();
     }));
     $<HTMLSelectElement>("fc-head").onchange = (e) => {
       this.fcHead = (e.target as HTMLSelectElement).value;
       this.onForecast(this.fcHead, this.fcHorizon);
+      this.forecastNote();
     };
     window.addEventListener("keydown", (e) => {
       if ((e.target as HTMLElement).tagName === "INPUT") return;
@@ -87,6 +90,22 @@ export class Hud {
   }
 
   hover(text: string): void { $("hover").textContent = text; }
+
+
+  private forecastNote(): void {
+    const fc = this.lastForecast;
+    if (!fc) return;
+    const note = $("fc-note");
+    if (!fc.available) note.textContent = `Forecast unavailable: ${fc.reason}`;
+    else if (!this.fcHorizon) note.textContent = `Made on day ${fc.made_day + 1}. Pick a horizon to show it.`;
+    else {
+      const skill = fc.skill[`${this.fcHead}@${this.fcHorizon}d`];
+      const legend = this.fcHead === "links" ? "green: forms · red: breaks · faint: stays"
+        : this.fcHead === "mortality" ? "red: share of plants likely to die back"
+        : "green: good news · red: bad news";
+      note.textContent = `${legend}. Skill vs “no change” on unseen worlds: ${skill === undefined ? "–" : (skill * 100).toFixed(0) + "%"}.`;
+    }
+  }
 
   update(f: Frame): void {
     this.paused = f.speed === 0;
@@ -147,17 +166,8 @@ export class Hud {
     $("feed").innerHTML = [...f.feed].reverse().slice(0, 25)
       .map((m) => `<div class="${esc(m.who)}"><span>${esc(m.date)}</span> <b>${esc(m.who)}</b> ${esc(m.text)}</div>`).join("") +
       [...f.events].reverse().slice(0, 10).map((e) => `<div class="event"><span>${esc(e.date)}</span> ${esc(e.message)}</div>`).join("");
-    const fc = f.forecast;
-    const note = $("fc-note");
-    if (!fc.available) note.textContent = `Forecast unavailable: ${fc.reason}`;
-    else if (!this.fcHorizon) note.textContent = `Made on day ${fc.made_day + 1}. Pick a horizon to show it.`;
-    else {
-      const skill = fc.skill[`${this.fcHead}@${this.fcHorizon}d`];
-      const legend = this.fcHead === "links" ? "green: forms · red: breaks · faint: stays"
-        : this.fcHead === "mortality" ? "red: share of plants likely to die back"
-        : "green: good news · red: bad news";
-      note.textContent = `${legend}. Skill vs “no change” on unseen worlds: ${skill === undefined ? "–" : (skill * 100).toFixed(0) + "%"}.`;
-    }
+    this.lastForecast = f.forecast;
+    this.forecastNote();
     const j = f.journal[f.journal.length - 1];
     if (j?.text) $("journal").innerHTML = `<h4>Field journal · ${esc(j.period)}</h4><div>${esc(j.text)}</div>`;
   }

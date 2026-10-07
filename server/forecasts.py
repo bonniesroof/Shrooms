@@ -61,6 +61,11 @@ class LiveForecasts:
             "pairs": adjacent_pairs(snap.rows, snap.cols).tolist(),
             "grid": [snap.rows, snap.cols],
             "skill": self.skill,
+            # Typical size of each change (std over training data), for color scales.
+            "typical": {
+                head: dict(zip([str(h) for h in HORIZONS_DAYS], v, strict=True))
+                for head, v in self.model.meta["target_scale"].items()
+            },
         }
         self.reason = ""
 

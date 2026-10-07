@@ -43,7 +43,7 @@ export type Forecast =
   | {
       available: true; made_day: number; horizons: number[]; grid: [number, number];
       heads: Record<string, Record<string, number[]>>; links_now: number[]; pairs: [number, number][];
-      skill: Record<string, number>;
+      skill: Record<string, number>; typical: Record<string, Record<string, number>>;
     };
 
 export function decodeFields(frame: Frame): Record<string, Field> {
