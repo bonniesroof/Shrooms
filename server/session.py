@@ -27,6 +27,7 @@ from cognition.keystone import MyceliumAgent
 from cognition.llm import Router, routes_from_spec
 from cognition.narrator import Narrator
 from server.director import Director
+from server.forecasts import LiveForecasts
 from server.scenarios import SCENARIOS, Brownfield
 from sim import SIM_VERSION, TICKS_PER_DAY
 from sim.engine import Simulation, describe
@@ -200,6 +201,7 @@ class GameSession:
         self.journal: list[dict] = []
         self.feed: list[dict] = []  # player-facing messages
         self.decision_id = 0
+        self.forecasts = LiveForecasts()
 
     # --- time ---------------------------------------------------------------
 
@@ -220,6 +222,7 @@ class GameSession:
                     self._start("narrator")
 
     def _daily(self) -> None:
+        self.forecasts.daily(self.sim)
         if not self.scenario:
             return
         day = self.sim.state.tick // TICKS_PER_DAY
@@ -334,6 +337,7 @@ class GameSession:
                 "journal": self.journal[-5:],
                 "inspector": self.inspector(),
                 "thinking": self.inflight[0] if self.inflight else None,
+                "forecast": self.forecasts.view(),
             }
 
     def stats(self) -> dict:
