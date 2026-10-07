@@ -366,3 +366,39 @@ def test_counterfactual_branches_share_weather_and_differ_by_the_spill():
     assert d.max() > 0.01 and d.min() > -1e-9  # the spill only adds contaminant
     again = world_pairs(908, branch_days=(10,), horizon=7)
     assert np.array_equal(p["x_spill"], again["x_spill"])  # deterministic
+
+
+# --- generative baseline and Gate C heads ----------------------------------------------------
+
+
+@needs_torch
+def test_generative_baseline_regresses_future_inputs(tiny_worlds):
+    from worldmodel.jepa import GenerativeForecaster
+
+    w, _ = tiny_worlds
+    torch.manual_seed(0)
+    m = GenerativeForecaster(n_in=14, n_glob=7, hidden=16, layers=2, pred_layers=1)
+    curve = train_temporal(m, w, epochs=4, batch=5, lr=3e-3, var_weight=0.0, seed=0,
+                           log=lambda s: None)  # fmt: skip
+    assert curve[-1]["jepa"] < curve[0]["jepa"]
+    tgt = m.target.state_dict()
+    assert all(torch.equal(v, m.context.state_dict()[k]) for k, v in tgt.items())
+
+
+@needs_torch
+def test_gate_c_heads_match_the_gnn_outputs_and_freeze_the_backbone(tiny_worlds):
+    from worldmodel.gate_c import Heads, attach_pairs
+    from worldmodel.targets import NODE_HEADS
+
+    w, _ = tiny_worlds
+    bb = attach_pairs(make_temporal())
+    before = {k: v.clone() for k, v in bb.state_dict().items()}
+    heads = Heads(bb, frozen=True)
+    rows = w.t[:4]
+    node, link = heads(w.at(rows), w.at(rows, -7), torch.zeros(4, 112))
+    assert node.shape == (4, 64, len(NODE_HEADS), len(HORIZONS_DAYS))
+    assert link.shape == (4, 112, len(HORIZONS_DAYS))
+    (node.sum() + link.sum()).backward()
+    assert all(p.grad is None for p in bb.parameters())
+    assert all(torch.equal(before[k], v) for k, v in bb.state_dict().items())
+    assert any(p.grad is not None for n, p in heads.named_parameters() if n.startswith("node"))
