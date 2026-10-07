@@ -27,6 +27,21 @@ def test_ridge_recovers_a_linear_map():
     assert r2(y, Ridge(1e-6).fit(x, y).predict(x)) > 0.999
 
 
+def test_collapse_monitor_flags_complete_and_dimensional_collapse():
+    from worldmodel.collapse import CollapseMonitor
+
+    rng = np.random.default_rng(0)
+    mon = CollapseMonitor()
+    mon.record(0, healthy=rng.normal(size=(500, 64)))
+    assert not mon.collapsed
+    point = np.ones((500, 64)) + 1e-3 * rng.normal(size=(500, 64))  # all rows ~ one vector
+    line = np.outer(rng.normal(size=500), rng.normal(size=64))  # rank one
+    mon.record(1, point=point, line=line)
+    assert {(f["embedding"], f["kind"]) for f in mon.flags} == {
+        ("point", "complete"), ("line", "dimensional")}  # fmt: skip
+    assert mon.report()["collapsed"] and "COLLAPSED" in mon.line()
+
+
 def test_collapse_stats_tell_spread_from_collapse():
     rng = np.random.default_rng(0)
     spread = collapse_stats(rng.normal(size=(1000, 16)))
@@ -171,6 +186,27 @@ def test_loss_decreases_on_a_tiny_run(tiny):
                   log=lambda s: None)  # fmt: skip
     assert curve[-1]["jepa"] < 0.7 * curve[0]["jepa"], [c["jepa"] for c in curve]
     assert curve[-1]["target_rank"] > 2  # not collapsed to a point or a line
+
+
+@needs_torch
+def test_monitor_flags_a_jepa_trained_without_stop_grad(tiny):
+    """Without the EMA target and stop-grad (and no variance term), the context encoder
+    can satisfy the loss by mapping every patch to the same latent. It does, and the
+    monitor says so; the same run with stop-grad stays healthy."""
+    from worldmodel.collapse import CollapseMonitor
+
+    out = {}
+    for stop_grad in (True, False):
+        m = make()
+        m.stop_grad = stop_grad
+        mon = CollapseMonitor()
+        curve = train(m, tiny, epochs=8, batch=8, lr=3e-3, mask_ratio=0.3, var_weight=0.0,
+                      seed=0, log=lambda s: None, monitor=mon)  # fmt: skip
+        out[stop_grad] = (mon, curve[-1]["jepa"])
+    assert not out[True][0].collapsed
+    flags = out[False][0].flags
+    assert any(f["embedding"] == "context" and f["kind"] == "complete" for f in flags)
+    assert out[False][1] < out[True][1]  # the collapsed model "wins" on its own loss
 
 
 @needs_torch
