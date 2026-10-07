@@ -45,3 +45,6 @@ h4 { margin: 8px 0 2px; font-size: 11px; color: var(--dim); text-transform: uppe
 #banner.show { display: block; } #banner.lost { border-color: var(--bad); } #banner button { margin-top: 10px; }
 #toast { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); opacity: 0; transition: opacity .2s; background: #2d4a37; padding: 6px 12px; border-radius: 6px; pointer-events: none; }
 #toast.show { opacity: 1; } #toast.bad { background: #5a2a24; }
+#fc-horizon { display: flex; gap: 3px; margin-bottom: 5px; }
+#fc-head { width: 100%; background: #10140e; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px; font: inherit; }
+#fc-note { color: var(--dim); font-size: 11px; margin-top: 4px; }

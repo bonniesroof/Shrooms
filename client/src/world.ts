@@ -3,7 +3,7 @@
 // network with nutrient pulses from the keystone agent's actions).
 
 import { Application, Container, Graphics, Sprite, Texture } from "pixi.js";
-import type { Field, Flow } from "./net";
+import type { Field, Flow, Forecast } from "./net";
 
 export const CELL = 10; // world px per grid cell
 const PATCH = 8; // cells per patch (matches the sim's network patches)
@@ -40,6 +40,10 @@ export class World {
   private glow = new Graphics(); private core = new Graphics();
   private pulses: { s: Sprite; ax: number; ay: number; bx: number; by: number; t: number; speed: number }[] = [];
   private overlay = new Graphics();
+  private forecastLayer = new Graphics();
+  forecast: Forecast | null = null;
+  forecastHead = "biomass";
+  forecastHorizon = 0; // days; 0 = off
   private site = new Graphics();
   private dotTex: Texture; private bugTex: Texture; private sparkTex: Texture;
   private fields: Record<string, Field> = {};
@@ -80,7 +84,7 @@ export class World {
       this.pulses.push({ s, ax: 0, ay: 0, bx: 0, by: 0, t: 0, speed: 0 });
       this.under.addChild(s);
     }
-    this.root.addChild(this.surface, this.under, this.site, this.overlay);
+    this.root.addChild(this.surface, this.under, this.forecastLayer, this.site, this.overlay);
     this.plantLayer.cacheAsTexture(true);
     this.netLayer.cacheAsTexture(true);
     this.setView("surface");
@@ -227,6 +231,51 @@ export class World {
     this.netLayer.updateCacheTexture();
     this.netBuiltAt = performance.now();
     this.netDirty = false;
+  }
+
+  /** Predicted value for the patch under (x, y), or null when the overlay is off. */
+  forecastAt(x: number, y: number): number | null {
+    const f = this.forecast;
+    if (!f?.available || !this.forecastHorizon || this.forecastHead === "links") return null;
+    const v = f.heads[this.forecastHead]?.[String(this.forecastHorizon)];
+    return v ? v[Math.floor(y / PATCH) * f.grid[1] + Math.floor(x / PATCH)] : null;
+  }
+
+  /** Tint each patch by the forecast: change in biomass, contamination or moisture, or die-back risk. */
+  drawForecast(): void {
+    const g = this.forecastLayer.clear();
+    const f = this.forecast;
+    if (!f?.available || !this.forecastHorizon) return;
+    const key = String(this.forecastHorizon), [rows, cols] = f.grid, S = PATCH * CELL;
+    if (this.forecastHead === "links") {
+      const p = f.heads.links[key];
+      f.pairs.forEach(([i, j], k) => {
+        const now = f.links_now[k] === 1, will = p[k] > 0.5;
+        if (!now && !will) return;
+        const color = now && will ? 0x8fe3b8 : will ? 0x6bff6b : 0xff5a4a; // stays / forms / breaks
+        const ax = ((i % cols) + 0.5) * S, ay = (Math.floor(i / cols) + 0.5) * S;
+        const bx = ((j % cols) + 0.5) * S, by = (Math.floor(j / cols) + 0.5) * S;
+        g.moveTo(ax, ay).lineTo(bx, by).stroke({ width: now === will ? 2 : 5, color, alpha: now === will ? 0.35 : 0.95 });
+      });
+      return;
+    }
+    const v = f.heads[this.forecastHead][key];
+    // Color scales: what counts as a big change for each head.
+    const scale = { biomass: 0.5, contamination: 0.3, moisture: 0.25, mortality: 0.5 }[this.forecastHead] ?? 1;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const val = v[r * cols + c], t = Math.max(-1, Math.min(1, val / scale));
+      let color: number, alpha: number;
+      if (this.forecastHead === "mortality") { color = 0xff3b2f; alpha = 0.7 * Math.max(0, t); }
+      else {
+        // Good news green, bad news red: more plants or water good, more contamination bad.
+        const good = this.forecastHead === "contamination" ? -t : t;
+        color = good >= 0 ? 0x3cff8a : 0xff4a3a; alpha = 0.55 * Math.abs(good);
+      }
+      if (alpha > 0.03) g.rect(c * S + 1, r * S + 1, S - 2, S - 2).fill({ color, alpha });
+    }
+    for (let r = 0; r <= rows; r++) g.moveTo(0, r * S).lineTo(cols * S, r * S);
+    for (let c = 0; c <= cols; c++) g.moveTo(c * S, 0).lineTo(c * S, rows * S);
+    g.stroke({ width: 0.5, color: 0xffffff, alpha: 0.12 });
   }
 
   animate(dtMs: number): void {

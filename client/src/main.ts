@@ -44,15 +44,33 @@ async function start(): Promise<void> {
     const conn = new Connection();
     const hud = new Hud(conn);
     hud.onView = (v) => world.setView(v);
+    hud.onForecast = (head, horizon) => {
+      world.forecastHead = head;
+      world.forecastHorizon = horizon;
+      world.drawForecast();
+    };
     conn.onHello = (h) => hud.setHello(h);
     conn.onReply = (r) => { if (r.type === "error") hud.toast(r.error ?? "error", true); };
     conn.onStatus = (s) => { if (s === "closed") hud.toast("Disconnected — reconnecting…", true); };
     conn.onFrame = (f) => {
       world.update(decodeFields(f), f.flows, f.scenario?.site ?? null);
       hud.update(f);
+      const made = world.forecast?.available ? world.forecast.made_day : -1;
+      world.forecast = f.forecast;
+      if (!f.forecast.available || f.forecast.made_day !== made) world.drawForecast();
     };
     setInterval(() => hud.perf(fpsAvg, world.entityCount()), 500);
 
+    const forecastText = (x: number, y: number): string => {
+      const p = world.forecastAt(x, y);
+      if (p === null) return "";
+      const h = world.forecastHorizon, head = world.forecastHead;
+      const pct = (d: number) => `${d >= 0 ? "+" : ""}${((Math.exp(d) - 1) * 100).toFixed(0)}%`;
+      const text = head === "mortality" ? `${(p * 100).toFixed(0)}% die-back risk`
+        : head === "moisture" ? `moisture ${p >= 0 ? "+" : ""}${(p * 100).toFixed(0)} pts`
+        : `${head} ${pct(p)}`;
+      return ` · forecast ${h} d: ${text}`;
+    };
     const cellAt = (e: { global: { x: number; y: number } }) => {
       const p = camera.toLocal(e.global);
       const x = Math.floor(p.x / CELL), y = Math.floor(p.y / CELL);
@@ -65,7 +83,7 @@ async function start(): Promise<void> {
       world.cursor(c?.[0] ?? null, c?.[1] ?? null, hud.tool);
       if (!c) return hud.hover("");
       const [x, y] = c, v = (n: string) => world.value(n, x, y);
-      hud.hover(`(${x},${y}) plants ${v("plant").toFixed(0)} g · fungi ${v("mycorrhiza").toFixed(1)} · bacteria ${v("bacteria").toFixed(1)} · contaminant ${v("contaminant").toFixed(1)} g · moisture ${(v("moisture") * 100).toFixed(0)}%`);
+      hud.hover(`(${x},${y}) plants ${v("plant").toFixed(0)} g · fungi ${v("mycorrhiza").toFixed(1)} · bacteria ${v("bacteria").toFixed(1)} · contaminant ${v("contaminant").toFixed(1)} g · moisture ${(v("moisture") * 100).toFixed(0)}%` + forecastText(x, y));
     });
     app.stage.on("pointertap", (e) => {
       const c = cellAt(e);

@@ -21,6 +21,18 @@
     <aside id="left">
       <section id="objectives"></section>
       <section><h3>Tools</h3><div id="budget"></div><div id="tools"></div></section>
+      <section id="forecast">
+        <h3>Forecast (GNN)</h3>
+        <div id="fc-horizon"><button data-h="0" class="on">Off</button><button data-h="1">24 h</button><button data-h="7">7 d</button><button data-h="30">30 d</button></div>
+        <select id="fc-head">
+          <option value="biomass">Plant biomass</option>
+          <option value="contamination">Contamination</option>
+          <option value="moisture">Soil moisture</option>
+          <option value="mortality">Die-back risk</option>
+          <option value="links">Fungal links</option>
+        </select>
+        <div id="fc-note"></div>
+      </section>
       <section id="stats"></section>
     </aside>
     <main id="map"><div id="hover"></div><div id="banner"></div><div id="toast"></div></main>

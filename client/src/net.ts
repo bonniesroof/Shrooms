@@ -35,7 +35,16 @@ export interface Frame {
     accepted: Record<string, unknown>[]; rejected: { proposal: Record<string, unknown>; violations: string[] }[];
   };
   thinking: string | null;
+  forecast: Forecast;
 }
+
+export type Forecast =
+  | { available: false; reason: string }
+  | {
+      available: true; made_day: number; horizons: number[]; grid: [number, number];
+      heads: Record<string, Record<string, number[]>>; links_now: number[]; pairs: [number, number][];
+      skill: Record<string, number>;
+    };
 
 export function decodeFields(frame: Frame): Record<string, Field> {
   const out: Record<string, Field> = {};
