@@ -6,8 +6,8 @@ encoder* says the hidden patches look like. The loss lives in latent space:
 nothing is reconstructed.
 
     snapshot ──► target encoder (EMA, no grad) ──► layer-normed latents of masked patches ┐
-       │                                                                                  │ L1
-       └─ mask ─► context encoder ──► predictor (mask tokens at hidden patches) ──────────┘
+       │                                                                   smooth-L1 │
+       └─ mask ─► context encoder ──► predictor (mask tokens at hidden patches) ──────┘
 
 Anti-collapse hygiene: the target encoder is an exponential moving average of
 the context encoder and gets no gradient (stop-grad), and an optional VICReg

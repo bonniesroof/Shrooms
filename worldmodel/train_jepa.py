@@ -256,7 +256,10 @@ def main() -> None:
 def load_model(path: Path = DEFAULT_PATH) -> tuple[StaticJEPA, dict]:
     ckpt = torch.load(path, weights_only=True)
     model = StaticJEPA(**ckpt["config"])
-    model.load_state_dict({k: v.float() for k, v in ckpt["state_dict"].items()}, strict=False)
+    missing, unexpected = model.load_state_dict(
+        {k: v.float() for k, v in ckpt["state_dict"].items()}, strict=False
+    )
+    assert set(missing) == {"mask"} and not unexpected, (missing, unexpected)  # mask is rebuilt
     return model.eval(), ckpt["meta"]
 
 
