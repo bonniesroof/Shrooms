@@ -1,0 +1,270 @@
+{
+ "metric": "test mean skill vs persistence (targets.scores), worlds 24-27",
+ "gate_c": "a JEPA backbone with heads beats the GNN at 7 and 30 d",
+ "gate_c_passed": false,
+ "jepa_vs_gnn": {
+  "temporal/frozen": {
+   "7d": false,
+   "30d": false
+  },
+  "temporal/finetune": {
+   "7d": false,
+   "30d": false
+  }
+ },
+ "table": {
+  "gnn (Phase 4, supervised)": {
+   "mean_skill@1d": 0.2566046417722537,
+   "mean_skill@7d": 0.3545804100386955,
+   "mean_skill@30d": 0.43310809920413007,
+   "mean_skill_ex_mortality@1d": 0.22286343472543085,
+   "mean_skill_ex_mortality@7d": 0.32388543404682435,
+   "mean_skill_ex_mortality@30d": 0.4227315181491367
+  },
+  "temporal/frozen": {
+   "mean_skill@1d": 0.1621656319425952,
+   "mean_skill@7d": 0.2632393090311424,
+   "mean_skill@30d": 0.3442937748520666,
+   "mean_skill_ex_mortality@1d": 0.18236468921229887,
+   "mean_skill_ex_mortality@7d": 0.22129152259996707,
+   "mean_skill_ex_mortality@30d": 0.31390055498323954
+  },
+  "temporal/finetune": {
+   "mean_skill@1d": 0.26892212133145704,
+   "mean_skill@7d": 0.2549546864043961,
+   "mean_skill@30d": 0.3854747167662498,
+   "mean_skill_ex_mortality@1d": 0.2358654510036099,
+   "mean_skill_ex_mortality@7d": 0.1982330819226359,
+   "mean_skill_ex_mortality@30d": 0.3630290184556847
+  },
+  "generative/frozen": {
+   "mean_skill@1d": 0.21506060661312554,
+   "mean_skill@7d": 0.3334707541597814,
+   "mean_skill@30d": 0.42566475456087105,
+   "mean_skill_ex_mortality@1d": 0.1872529016734683,
+   "mean_skill_ex_mortality@7d": 0.2980232665823258,
+   "mean_skill_ex_mortality@30d": 0.4140468843306889
+  },
+  "generative/finetune": {
+   "mean_skill@1d": 0.2875703301246615,
+   "mean_skill@7d": 0.33655808117594493,
+   "mean_skill@30d": 0.44218161529963246,
+   "mean_skill_ex_mortality@1d": 0.27129908262767827,
+   "mean_skill_ex_mortality@7d": 0.30148015665608663,
+   "mean_skill_ex_mortality@30d": 0.4341928128800704
+  },
+  "scratch/frozen": {
+   "mean_skill@1d": 0.2781434647969324,
+   "mean_skill@7d": 0.29207957417952113,
+   "mean_skill@30d": 0.3555814941120084,
+   "mean_skill_ex_mortality@1d": 0.22893568396582556,
+   "mean_skill_ex_mortality@7d": 0.2421527928110696,
+   "mean_skill_ex_mortality@30d": 0.3250089451460114
+  },
+  "scratch/finetune": {
+   "mean_skill@1d": 0.29144664893739475,
+   "mean_skill@7d": 0.3042089618615199,
+   "mean_skill@30d": 0.41218273176793013,
+   "mean_skill_ex_mortality@1d": 0.2685001452575633,
+   "mean_skill_ex_mortality@7d": 0.260984564872244,
+   "mean_skill_ex_mortality@30d": 0.3965307094421793
+  }
+ },
+ "per_head": {
+  "temporal/frozen": {
+   "biomass@1d": 0.5533050788050364,
+   "biomass@7d": 0.6111253618045249,
+   "biomass@30d": 0.6770632898131342,
+   "contamination@1d": -0.012789813044901788,
+   "contamination@7d": 0.11537511937893397,
+   "contamination@30d": 0.1589716744769999,
+   "moisture@1d": 0.1748180698521109,
+   "moisture@7d": 0.10835007506283145,
+   "moisture@30d": 0.26049707185887705,
+   "mortality@1d": 0.08136940286378058,
+   "mortality@7d": 0.4310304547558438,
+   "mortality@30d": 0.46586665432737484,
+   "links@1d": 0.014125421236949931,
+   "links@7d": 0.05031553415357792,
+   "links@30d": 0.15907018378394688
+  },
+  "temporal/finetune": {
+   "biomass@1d": 0.7072994884795824,
+   "biomass@7d": 0.7723753585290503,
+   "biomass@30d": 0.7806760516125069,
+   "contamination@1d": 0.19419424375043493,
+   "contamination@7d": 0.2123223452722639,
+   "contamination@30d": 0.2157175545998291,
+   "moisture@1d": 0.19807879798103045,
+   "moisture@7d": 0.12624027062706233,
+   "moisture@30d": 0.28757651959136366,
+   "mortality@1d": 0.4011488026428456,
+   "mortality@7d": 0.481841104331437,
+   "mortality@30d": 0.47525751000851,
+   "links@1d": -0.15611072619660815,
+   "links@7d": -0.31800564673783294,
+   "links@30d": 0.16814594801903915
+  },
+  "generative/frozen": {
+   "biomass@1d": 0.6345174592440034,
+   "biomass@7d": 0.7047971157835577,
+   "biomass@30d": 0.7228269764009652,
+   "contamination@1d": -0.07434806530907956,
+   "contamination@7d": 0.12784464590615818,
+   "contamination@30d": 0.15537551519125914,
+   "moisture@1d": 0.17735317845407705,
+   "moisture@7d": 0.12491519806291984,
+   "moisture@30d": 0.3059222413953415,
+   "mortality@1d": 0.32629142637175446,
+   "mortality@7d": 0.47526070446960356,
+   "mortality@30d": 0.4721362354815992,
+   "links@1d": 0.011489034304872359,
+   "links@7d": 0.23453610657666757,
+   "links@30d": 0.4720628043351899
+  },
+  "generative/finetune": {
+   "biomass@1d": 0.7041424881470193,
+   "biomass@7d": 0.7687028444886633,
+   "biomass@30d": 0.7833899104562547,
+   "contamination@1d": 0.15310126097002685,
+   "contamination@7d": 0.19948710988578244,
+   "contamination@30d": 0.20166272544991248,
+   "moisture@1d": 0.1970679319393146,
+   "moisture@7d": 0.13155099033523854,
+   "moisture@30d": 0.3012639209389415,
+   "mortality@1d": 0.3526553201125944,
+   "mortality@7d": 0.47686977925537843,
+   "mortality@30d": 0.4741368249778808,
+   "links@1d": 0.03088464945435221,
+   "links@7d": 0.10617968191466198,
+   "links@30d": 0.45045469467517285
+  },
+  "scratch/frozen": {
+   "biomass@1d": 0.5839918221999862,
+   "biomass@7d": 0.6423162076315793,
+   "biomass@30d": 0.6585970265998329,
+   "contamination@1d": 0.13373133931281256,
+   "contamination@7d": 0.13220497238198214,
+   "contamination@30d": 0.12797326693982525,
+   "moisture@1d": 0.19201705869291064,
+   "moisture@7d": 0.12818245589784172,
+   "moisture@30d": 0.2911747471271553,
+   "mortality@1d": 0.47497458812136006,
+   "mortality@7d": 0.4917866996533271,
+   "mortality@30d": 0.47787168997599594,
+   "links@1d": 0.0060025156575928,
+   "links@7d": 0.0659075353328753,
+   "links@30d": 0.22229073991723236
+  },
+  "scratch/finetune": {
+   "biomass@1d": 0.7024028087765405,
+   "biomass@7d": 0.7724216089366347,
+   "biomass@30d": 0.7855498988003815,
+   "contamination@1d": 0.14309585393977742,
+   "contamination@7d": 0.16070661915875506,
+   "contamination@30d": 0.1693841326295118,
+   "moisture@1d": 0.19728319108347547,
+   "moisture@7d": 0.1314539725398508,
+   "moisture@30d": 0.30292532784052517,
+   "mortality@1d": 0.3832326636567205,
+   "mortality@7d": 0.47710654981862344,
+   "mortality@30d": 0.4747908210709333,
+   "links@1d": 0.03121872723046004,
+   "links@7d": -0.020643941146264666,
+   "links@30d": 0.3282634784982986
+  },
+  "gnn (Phase 4, supervised)": {
+   "biomass@1d": 0.7086210669842516,
+   "biomass@7d": 0.7776197416181526,
+   "biomass@30d": 0.7784500801371836,
+   "contamination@1d": 0.1799620861102771,
+   "contamination@7d": 0.21483125872546882,
+   "contamination@30d": 0.2260050424997989,
+   "moisture@1d": 0.1943253580772739,
+   "moisture@7d": 0.10997072868584357,
+   "moisture@30d": 0.27530422788441333,
+   "mortality@1d": 0.39156946995954545,
+   "mortality@7d": 0.47736031400617995,
+   "mortality@30d": 0.47461442342410354,
+   "links@1d": -0.19145477227007923,
+   "links@7d": 0.19312000715783262,
+   "links@30d": 0.4111667220751508
+  }
+ },
+ "seconds": {
+  "temporal/frozen": 438.9,
+  "temporal/finetune": 466.8,
+  "generative/frozen": 438.9,
+  "generative/finetune": 479.0,
+  "scratch/frozen": 424.9,
+  "scratch/finetune": 448.6
+ },
+ "epochs": {
+  "temporal/frozen": 30,
+  "temporal/finetune": 12,
+  "generative/frozen": 30,
+  "generative/finetune": 12,
+  "scratch/frozen": 30,
+  "scratch/finetune": 12
+ },
+ "train_stride": {
+  "temporal/frozen": 1,
+  "temporal/finetune": 1,
+  "generative/frozen": 1,
+  "generative/finetune": 1,
+  "scratch/frozen": 1,
+  "scratch/finetune": 1
+ },
+ "other_sweeps": {
+  "train_stride_2": {
+   "temporal/frozen": {
+    "mean_skill@1d": 0.12541831423490885,
+    "mean_skill@7d": 0.26959424004523563,
+    "mean_skill@30d": 0.36438951627121313,
+    "mean_skill_ex_mortality@1d": 0.1583973290861015,
+    "mean_skill_ex_mortality@7d": 0.23208243332909806,
+    "mean_skill_ex_mortality@30d": 0.3390009143567725
+   },
+   "temporal/finetune": {
+    "mean_skill@1d": 0.25969131470619305,
+    "mean_skill@7d": 0.3328873801208899,
+    "mean_skill@30d": 0.4114742809277396,
+    "mean_skill_ex_mortality@1d": 0.2619950721021359,
+    "mean_skill_ex_mortality@7d": 0.30028162379816603,
+    "mean_skill_ex_mortality@30d": 0.39636538297860213
+   },
+   "generative/frozen": {
+    "mean_skill@1d": 0.2707819318811623,
+    "mean_skill@7d": 0.34827786704352165,
+    "mean_skill@30d": 0.43248396310113846,
+    "mean_skill_ex_mortality@1d": 0.23619588563492885,
+    "mean_skill_ex_mortality@7d": 0.31393905888620677,
+    "mean_skill_ex_mortality@30d": 0.4214494337379113
+   },
+   "generative/finetune": {
+    "mean_skill@1d": 0.2565588939758595,
+    "mean_skill@7d": 0.3402305416131243,
+    "mean_skill@30d": 0.4375434279155076,
+    "mean_skill_ex_mortality@1d": 0.2527614587830921,
+    "mean_skill_ex_mortality@7d": 0.30804251229874446,
+    "mean_skill_ex_mortality@30d": 0.4289119137788767
+   },
+   "scratch/frozen": {
+    "mean_skill@1d": 0.24977984020805571,
+    "mean_skill@7d": 0.2766374138027614,
+    "mean_skill@30d": 0.3437590972409289,
+    "mean_skill_ex_mortality@1d": 0.20999190971567375,
+    "mean_skill_ex_mortality@7d": 0.22458018985570077,
+    "mean_skill_ex_mortality@30d": 0.31053249459794896
+   },
+   "scratch/finetune": {
+    "mean_skill@1d": 0.2519054490156806,
+    "mean_skill@7d": 0.3238566911625462,
+    "mean_skill@30d": 0.4204703122795818,
+    "mean_skill_ex_mortality@1d": 0.24995885117249766,
+    "mean_skill_ex_mortality@7d": 0.28930380431760927,
+    "mean_skill_ex_mortality@30d": 0.4074832886265185
+   }
+  }
+ }
+}
