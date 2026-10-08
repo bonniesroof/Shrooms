@@ -32,10 +32,10 @@ Step 4 adds collapse monitoring, a generative baseline and the Gate C test. A co
 | JEPA, frozen | 0.263 / 0.344 | 0.270 / 0.364 | 0.221 / 0.314 |
 | JEPA, fine-tuned | 0.255 / 0.385 | 0.333 / 0.411 | 0.198 / 0.363 |
 | generative, frozen | 0.333 / 0.426 | 0.348 / 0.432 | 0.298 / 0.414 |
-| generative, fine-tuned | 0.337 / **0.442** | 0.340 / **0.438** | 0.301 / **0.434** |
+| generative, fine-tuned | 0.337 / 0.442 | 0.340 / 0.438 | 0.301 / 0.434 |
 | same network from scratch, fine-tuned | 0.304 / 0.412 | 0.324 / 0.420 | 0.261 / 0.397 |
 
-Why it fails: JEPA pretraining doesn't beat training from scratch (they swap places between sweeps). Frozen JEPA latents trail a frozen random network at 1 and 7 days. The generative objective, which reconstructs exactly the quantities the heads predict, is the better pretraining, and is the only one to beat the GNN anywhere (30 days). With 14 features per patch there is little unpredictable detail for a latent-space objective to discard. The full write-up is in the [Phase 5 notebook](notebooks/phase5_jepa.ipynb).
+Why it fails: JEPA pretraining doesn't beat training from scratch (they swap places between sweeps). Frozen JEPA latents trail a frozen random network at 1 and 7 days. The generative objective, which reconstructs exactly the quantities the heads predict, is the better pretraining, and is the only backbone that reaches the GNN: at 30 days it is level with it (0.442 and 0.438 vs 0.433), within run-to-run noise on one seed per configuration, and it does not match it at 7 days. Where the backbones lose most to the GNN is fungal links (the fine-tuned JEPA's 7-day links skill drops to -0.32 on the test worlds) and, for frozen backbones, biomass. One hypothesis for why JEPA doesn't help: with 14 features per patch there may be little unpredictable detail for a latent-space objective to discard. The fine-tuned JEPA picked its last epoch, so its 12-epoch budget (set by wall time) may undertrain it. The full write-up is in the [Phase 5 notebook](notebooks/phase5_jepa.ipynb).
 
 Still open from Phase 3: the 60 fps half of Gate B is unverified on a real GPU (open `/?bench` on a machine with one). Phase 2's agents have only run on the scripted stand-in. See [ROADMAP.md](ROADMAP.md).
 
