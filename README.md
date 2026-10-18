@@ -164,6 +164,7 @@ Splits are by world: seeds 0–19 train, 20–23 select the best epoch, 24–27 
 
 ## Docs
 
+- **[v2 spec: Talking Voxels](docs/SPEC-voxels.md):** proposed refactor — voxel agents that talk in speech bubbles, LangGraph, Godot web client, Hermes integration, phased plan
 - **Spec:** full design, including agents, environment, orchestration and world model (link TBD)
 - **[ROADMAP.md](ROADMAP.md):** phased development plan
 - **[Architecture](docs/architecture.md):** system diagram of what's built and what's planned, plus phase status
